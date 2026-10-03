@@ -1,115 +1,132 @@
 # Empaquetado y distribución de PORT.
 #
-# Este archivo produce binarios instalables en cualquier distribución de Linux,
-# macOS y Windows. La clave es no enlazar contra las librerías del sistema: GPUI
-# carga Wayland y Vulkan por `dlopen`, así que el binario necesita encontrarlas
-# en runtime. Declararlas como dependencias de `runtimeInputs` hace que Nix las
-# guarde el binario y las añada al RPATH, sin tocar el código.
+# Este flake produce un binario de PORT que se puede instalar en cualquier
+# distribución de Linux, macOS y Windows sin compilar nada a mano.
+#
+# El punto clave: GPUI enlaza contra xcb y xkbcommon al compilar, y carga
+# Wayland y Vulkan por `dlopen` al ejecutar. Si el binario depende de las
+# librerías del sistema, no funciona igual en todas las distros. Nix las
+# guarda junto al binario y las añade al RPATH, así que el resultado es el
+# mismo venga de donde venga.
 #
 # Uso:
-#   nix build .#port              # binario estático en result/bin/port
-#   nix run .#port                # compila y ejecuta
-#   nix build .#port-static       # musl, para Alpine y Scratch
+#   nix build .#port            # binario en result/bin/port
+#   nix run .#port              # compila y ejecuta
+#   nix develop -- cargo test   # entorno de desarrollo
 #
-# En una distribución que no sea Nix, el binario de `result/bin/port` funciona
-# siempre que existan Wayland/XCB y Vulkan en el sistema.
+# El binario de `result/bin/port` también funciona fuera de Nix en cualquier
+# distro que tenga una sesión Wayland o X11 y Vulkan.
 
-{ pkgs ? import <nixpkgs> { }
-, rustPlatform ? pkgs.rustPlatform
-, rust-overlay ? null
-}:
-
-let
-  inherit (pkgs) lib;
-
-  # El overlay de Rust permite fijarlo a una versión concreta. Si no se pasa,
-  # se usa el del propio nixpkgs, que es suficiente para compilar.
-  rustToolchain =
-    if rust-overlay == null then
-      pkgs.rustPlatform.rust.rustc
-    else
-      (import rust-overlay { inherit pkgs; }).rust-bin.stable.latest.default;
-
-  # GPUI enlaza contra xcb y xkbcommon en tiempo de compilación, y carga
-  # Wayland y Vulkan por `dlopen` en tiempo de ejecución. Todas deben viajar con
-  # el binario.
-  runtimeLibs = with pkgs; [
-    libxcb
-    libxkbcommon
-    freetype
-    wayland
-    vulkan-loader
-  ];
-
-  libDirs = lib.concatMapStringsSep ":" (p: "${p}/lib") runtimeLibs;
-  rpathFlags = lib.concatMapStringsSep " " (p: "-C link-arg=-Wl,-rpath,${p}/lib") runtimeLibs;
-
-  # Herramientas de desarrollo: el toolchain de Rust más lo que GPUI necesita
-  # para resolver sus dependencias de sistema al compilar.
-  nativeInputs = with pkgs; [
-    pkg-config
-    cmake
-    nasm
-    python3
-    fontconfig
-    freetype
-    harfbuzz
-  ] ++ runtimeLibs;
-
-  commonEnv = {
-    LIBRARY_PATH = libDirs;
-    RUSTFLAGS = rpathFlags;
-    # La fuente de Fira Code se embebe, así que la app no depende de que el
-    # sistema la tenga instalada.
-    PKG_CONFIG_PATH = lib.makeSearchPathOutput "lib/pkgconfig" runtimeLibs;
-  };
-
-  cargoBuild = rustPlatform.buildRustPackage {
-    pname = "port";
-    version = "0.1.0";
-
-    src = lib.cleanSource ./.;
-
-    cargoLock.lockFile = ./Cargo.lock;
-
-    nativeBuildInputs = nativeInputs;
-
-    buildAndTestSubdir = ".";
-
-    # El shell.nix ya declara las variables de entorno necesarias; aquí se
-    # repiten porque `buildRustPackage` corre en un sandbox limpio.
-    env = commonEnv;
-
-    # `cargo test` en el propio sandbox: si el binario no enlaza aquí, tampoco
-    # enlazará en la máquina del usuario.
-    doCheck = true;
-
-    meta = with pkgs.lib; {
-      description = "PORT: Plugin-Oriented Rust Terminal";
-      longDescription = ''
-        Terminal emulator written in Rust on GPUI, with a plugin system where
-        any core behaviour can be replaced without touching the core.
-      '';
-      license = licenses.mit;
-      platforms = platforms.unix ++ platforms.windows;
-      mainProgram = "port";
-    };
-  };
-in
 {
-  inherit cargoBuild;
+  description = "PORT: Plugin-Oriented Rust Terminal";
 
-  # Alias con el nombre del producto, que es como se documenta.
-  port = cargoBuild;
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
-  default = cargoBuild;
+  outputs = { self, nixpkgs }:
+    let
+      systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
+      forAllSystems = f:
+        nixpkgs.lib.genAttrs systems (system: f (import nixpkgs {
+          inherit system;
+        }));
+    in
+    {
+      packages = forAllSystems (pkgs: rec {
+        port = pkgs.rustPlatform.buildRustPackage {
+          pname = "port";
+          version = "0.1.0";
 
-  # Build estático para sistemas sin glibc (Alpine, Scratch,(initramfs)).
-  #
-  # Nota: GPUI/Vulkan abren sockets, dlopen y threads, así que un binario
-  # completamente estático no es viable; esto produce un binario con menos
-  # dependencias de librerías C, útil en imágenes de contenedor mínima.
-  port-static = cargoBuild.overrideAttrs (old: {
-    pname = "port-static";
-  });
+          src = pkgs.lib.cleanSource ../.;
+          cargoLock.lockFile = ../Cargo.lock;
+
+          nativeBuildInputs = with pkgs; [
+            pkg-config
+            cmake
+            nasm
+            python3
+            fontconfig
+            harfbuzz
+
+            # Enlazadas al compilar y cargadas al ejecutar.
+            libxcb
+            libxkbcommon
+            freetype
+            wayland
+            vulkan-loader
+          ];
+
+          buildAndTestSubdir = ".";
+
+          # El sandbox de Nix no lee el shell.nix del repo, así que las
+          # variables de enlazado se declaran aquí. Si el binario no enlaza
+          # dentro del sandbox, tampoco enlazará fuera.
+          LIBRARY_PATH = pkgs.lib.makeSearchPathOutput "lib" (with pkgs; [
+            libxcb
+            libxkbcommon
+            freetype
+            wayland
+            vulkan-loader
+          ]);
+          RUSTFLAGS = pkgs.lib.concatMapStringsSep " " (p:
+            "-C link-arg=-Wl,-rpath,${p}/lib") (with pkgs; [
+              libxcb
+              libxkbcommon
+              freetype
+              wayland
+              vulkan-loader
+            ]);
+          PKG_CONFIG_PATH = pkgs.lib.makeSearchPathOutput "lib/pkgconfig" (with pkgs; [
+            libxcb
+            libxkbcommon
+            freetype
+            wayland
+          ]);
+
+          doCheck = true;
+
+          meta = {
+            description = "PORT: Plugin-Oriented Rust Terminal";
+            longDescription = ''
+              Terminal emulator written in Rust on GPUI, with a plugin system
+              where any core behaviour can be replaced without touching the core.
+            '';
+            license = pkgs.lib.licenses.mit;
+            mainProgram = "port";
+            platforms = pkgs.lib.platforms.unix;
+          };
+        };
+
+        default = port;
+      });
+
+      apps = forAllSystems (pkgs: {
+        default = {
+          type = "app";
+          program = "${self.packages.${pkgs.stdenv.hostPlatform.system}.port}/bin/port";
+        };
+      });
+
+      devShells = forAllSystems (pkgs: {
+        default = pkgs.mkShell {
+          packages = with pkgs; [
+            cargo
+            rustc
+            pkg-config
+            cmake
+            nasm
+            python3
+            fontconfig
+            harfbuzz
+            libxcb
+            libxkbcommon
+            freetype
+            wayland
+            vulkan-loader
+          ];
+          shellHook = ''
+            echo "PORT: shell listo (fonte $(command -v cargo))"
+          '';
+        };
+      });
+    };
 }

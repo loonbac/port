@@ -62,8 +62,13 @@ jobs:
 
       - name: Habilitar funciones experimentales de Nix
         run: |
+          set -eu
           mkdir -p "$HOME/.config/nix"
-          echo "experimental-features = nix-command flakes" >> "$HOME/.config/nix/nix.conf"
+          cat > "$HOME/.config/nix/nix.conf" <<'CONF'
+          experimental-features = nix-command flakes
+          build-users-group =
+          sandbox = true
+          CONF
 
       - name: Cache de Nix
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
