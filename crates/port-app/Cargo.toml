@@ -1,0 +1,14 @@
+[package]
+name = "port"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "PORT: Plugin-Oriented Rust Terminal"
+
+[[bin]]
+name = "port"
+path = "src/main.rs"
+
+[dependencies]
+gpui = { workspace = true }
+port-term-core = { path = "../term-core" }

@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = ["crates/term-core", "crates/port-app"]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "MIT"
+
+[workspace.dependencies]
+# Pino exacto: gpui es pre-1.0 y cambia entre versiones.
+gpui = "=0.2.2"
+alacritty_terminal = "0.26"
+portable-pty = "0.9"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true

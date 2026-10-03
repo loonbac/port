@@ -1,0 +1,188 @@
+//! Contrato del caso de uso [`Session`]: shell real, PTY real, sin ventana.
+//!
+//! Es la verificación de integración del núcleo: si esto pasa, el shell responde
+//! y la rejilla refleja lo que el shell escribe.
+
+use std::time::{Duration, Instant};
+
+use port_term_core::input::KeyMode;
+use port_term_core::pty::PtyConfig;
+use port_term_core::session::{GridSize, Session};
+
+/// Arranca un shell no interactivo predecible en vez del del usuario.
+fn plain_shell() -> PtyConfig {
+    PtyConfig {
+        command: "/bin/sh".to_string(),
+        args: Vec::new(),
+        cwd: None,
+    }
+}
+
+/// Bombea la sesión hasta que la salida estabilice o se acabe el tiempo.
+fn pump_until_quiet(session: &mut Session, quiet: Duration, limit: Duration) -> String {
+    let start = Instant::now();
+    let mut last_change = Instant::now();
+    while start.elapsed() < limit && last_change.elapsed() < quiet {
+        if session.pump() {
+            last_change = Instant::now();
+        } else {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    text_of(session)
+}
+
+fn text_of(session: &Session) -> String {
+    let frame = session.frame();
+    frame
+        .rows
+        .iter()
+        .map(|row| {
+            row.runs
+                .iter()
+                .map(|run| run.text.as_str())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Regresión del cuelgue de 39 minutos: `pump` no puede bloquearse esperando
+/// salida que no llega. Si vuelve a pasar, este test lo dice en un segundo.
+#[test]
+fn pump_returns_immediately_when_the_shell_is_silent() {
+    let mut session = Session::spawn(plain_shell(), GridSize::new(40, 8)).expect("sesión");
+
+    // Se deja que el shell arranque y consuma lo que tenga pendiente.
+    std::thread::sleep(Duration::from_millis(300));
+    for _ in 0..20 {
+        session.pump();
+    }
+
+    // Ahora está callado: cien llamadas deben costar casi nada.
+    let start = Instant::now();
+    for _ in 0..100 {
+        session.pump();
+    }
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed < Duration::from_millis(500),
+        "pump bloqueó: 100 llamadas con el shell callado tardaron {elapsed:?}"
+    );
+}
+
+#[test]
+fn shell_output_reaches_the_grid() {
+    let size = GridSize::new(60, 10);
+    let mut session = Session::spawn(plain_shell(), size).expect("arrancar la sesión");
+
+    session
+        .write(b"echo hola-port\n")
+        .expect("escribir en el shell");
+
+    let text = pump_until_quiet(&mut session, Duration::from_millis(150), Duration::from_secs(10));
+    assert!(
+        text.contains("hola-port"),
+        "el eco del shell debe aparecer en la rejilla:\n{text}"
+    );
+}
+
+#[test]
+fn multiline_output_advances_rows() {
+    let size = GridSize::new(40, 8);
+    let mut session = Session::spawn(plain_shell(), size).expect("arrancar la sesión");
+
+    session
+        .write(b"echo uno; echo dos\n")
+        .expect("escribir en el shell");
+
+    let text = pump_until_quiet(&mut session, Duration::from_millis(150), Duration::from_secs(10));
+    assert!(text.contains("uno"), "falta la primera línea:\n{text}");
+    assert!(text.contains("dos"), "falta la segunda línea:\n{text}");
+    let uno = text.find("uno").unwrap();
+    let dos = text.find("dos").unwrap();
+    assert!(uno < dos, "\"dos\" debe quedar debajo de \"uno\":\n{text}");
+}
+
+#[test]
+fn resize_is_applied_to_the_session() {
+    let mut session = Session::spawn(plain_shell(), GridSize::new(40, 8)).expect("sesión");
+    session.resize(GridSize::new(100, 30)).expect("redimensionar");
+
+    assert_eq!(session.size(), GridSize::new(100, 30));
+    assert_eq!(session.frame().columns, 100);
+    session.write(b"echo sigue\n").expect("escribir");
+    let text = pump_until_quiet(&mut session, Duration::from_millis(150), Duration::from_secs(10));
+    assert!(text.contains("sigue"), "el shell debe seguir vivo:\n{text}");
+}
+
+#[test]
+fn ctrl_d_ends_the_shell() {
+    let mut session = Session::spawn(plain_shell(), GridSize::new(40, 8)).expect("sesión");
+    std::thread::sleep(Duration::from_millis(200));
+    session.pump();
+
+    // Ctrl+D (fin de entrada) cierra el sh no interactivo.
+    session.write(&[0x04]).expect("escribir ctrl+d");
+
+    let start = Instant::now();
+    let mut exited = false;
+    while start.elapsed() < Duration::from_secs(5) {
+        session.pump();
+        if session.has_exited() {
+            exited = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(exited, "el shell debió terminar tras ctrl+d");
+}
+
+#[test]
+fn cursor_key_mode_is_normal_until_the_program_enables_application_keys() {
+    let mut session = Session::spawn(plain_shell(), GridSize::new(40, 8)).expect("sesión");
+    assert_eq!(
+        session.cursor_key_mode(),
+        KeyMode::NORMAL,
+        "por defecto las flechas van en modo normal"
+    );
+
+    session
+        .write(b"printf '\\033[?1h'\n")
+        .expect("activar modo aplicación");
+    pump_until_quiet(&mut session, Duration::from_millis(150), Duration::from_secs(10));
+
+    assert_eq!(
+        session.cursor_key_mode(),
+        KeyMode::APPLICATION,
+        "tras \\e[?1h las flechas deben ir en modo aplicación (SS3)"
+    );
+}
+
+#[test]
+fn fish_device_queries_are_replied_automatically_without_blocking() {
+    let config = PtyConfig {
+        command: "/run/current-system/sw/bin/fish".to_string(),
+        args: vec!["-l".to_string()],
+        cwd: None,
+    };
+    let mut session = Session::spawn(config, GridSize::new(100, 30)).expect("sesión fish");
+    let start = Instant::now();
+    let mut interactive = false;
+    while start.elapsed() < Duration::from_secs(4) {
+        session.pump();
+        let frame = session.frame();
+        for row in &frame.rows {
+            let text: String = row.runs.iter().map(|r| r.text.clone()).collect();
+            if text.contains("➜") {
+                interactive = true;
+                break;
+            }
+        }
+        if interactive {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    assert!(interactive, "fish debe responder con el prompt interactivo de inmediato sin esperar 10s");
+}
