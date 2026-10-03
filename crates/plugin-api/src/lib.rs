@@ -270,6 +270,13 @@ pub trait SpaceHook {
         self.take_close_space_request()
     }
 
+    /// Notifica al plugin de que una sesión desapareció porque su shell terminó.
+    /// El plugin debe quitar su pestaña y, si el espacio se queda sin pestañas,
+    /// eliminar también ese espacio.
+    fn on_session_closed(&self, session_id: usize) {
+        let _ = session_id;
+    }
+
     /// Compatibilidad previa.
     fn take_new_space_request(&self) -> bool {
         false
@@ -743,6 +750,17 @@ impl PluginRegistry {
             }
         }
         CloseDecision::Allow
+    }
+
+    /// Notifica a los plugins de que una sesión ya no existe.
+    pub fn on_session_closed(&self, session_id: usize) {
+        for entry in &self.plugins {
+            if entry.enabled {
+                if let Some(hook) = entry.plugin.space_hook() {
+                    hook.on_session_closed(session_id);
+                }
+            }
+        }
     }
 
     /// Notifica a los plugins que el cierre fue aceptado.

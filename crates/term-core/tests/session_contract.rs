@@ -390,3 +390,59 @@ fn session_manager_reports_running_apps_across_all_sessions() {
         "debe reportarse la sesión 0 ejecutando 'sleep', se obtuvo: {running:?}"
     );
 }
+
+#[test]
+fn a_shell_that_exits_is_reaped_and_the_manager_empties() {
+    let mut manager = SessionManager::new(plain_shell(), GridSize::new(60, 10)).expect("crear manager");
+    assert_eq!(manager.len(), 1);
+
+    // Un shell que ejecuta `exit` termina por su cuenta.
+    manager.write(b"exit\n").expect("salir del shell");
+
+    let mut reaped = Vec::new();
+    for _ in 0..60 {
+        manager.pump();
+        let exited = manager.reap_exited();
+        if !exited.is_empty() {
+            reaped = exited;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+
+    assert_eq!(reaped, vec![0], "la sesión 0 debió ser retirada al salir");
+    assert!(
+        manager.is_empty(),
+        "sin sesiones vivas la terminal debe quedar vacía, no colgada"
+    );
+}
+
+#[test]
+fn reaping_keeps_the_other_sessions_alive() {
+    let mut manager = SessionManager::new(plain_shell(), GridSize::new(60, 10)).expect("crear manager");
+    let second = manager.spawn_session().expect("crear segunda sesion");
+    assert_eq!(manager.len(), 2);
+
+    // `exit` siempre va a la sesión activa, así que hay que seleccionar la
+    // primera explícitamente para cerrar esa y no la otra.
+    assert!(manager.select(0));
+    manager.write(b"exit\n").expect("salir de la sesion 0");
+
+    let mut reaped = Vec::new();
+    for _ in 0..60 {
+        manager.pump();
+        let exited = manager.reap_exited();
+        if !exited.is_empty() {
+            reaped = exited;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+
+    assert_eq!(reaped, vec![0]);
+    assert_eq!(manager.len(), 1, "la otra sesión debe sobrevivir");
+    assert!(
+        manager.active_id() == second,
+        "el foco debe pasar a la sesión superviviente"
+    );
+}

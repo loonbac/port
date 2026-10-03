@@ -141,6 +141,23 @@ impl Render for TerminalView {
         }
 
         session_mgr.pump();
+
+        // Retira las sesiones cuyo shell terminó (por ejemplo, tras `exit`) y
+        // avisa a los plugins para quelimpien sus pestañas y espacios.
+        let exited = session_mgr.reap_exited();
+        for id in &exited {
+            plugins.on_session_closed(*id);
+        }
+
+        // Si no queda ninguna sesión viva, la terminal ya no tiene nada que
+        // mostrar: se cierra la ventana en lugar de quedarse pegada.
+        if session_mgr.is_empty() {
+            drop(session_mgr);
+            drop(plugins);
+            window.remove_window();
+            return div().size_full();
+        }
+
         if session_mgr.size() != grid {
             let _ = session_mgr.resize(grid);
         }

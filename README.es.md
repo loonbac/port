@@ -87,7 +87,7 @@ Wayland/XCB/Vulkan.
 
 ```bash
 nix-shell                      # entorno con librerías nativas enlazadas
-cargo test                     # 65 tests unitarios y de contrato
+cargo test                     # 67 tests unitarios y de contrato
 cargo build --release -p port
 ./target/release/port
 ```

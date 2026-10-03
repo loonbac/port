@@ -82,7 +82,7 @@ libraries.
 
 ```bash
 nix-shell                      # environment with native libraries linked
-cargo test                     # 65 unit and contract tests
+cargo test                     # 67 unit and contract tests
 cargo build --release -p port
 ./target/release/port
 ```

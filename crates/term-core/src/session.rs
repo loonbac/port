@@ -279,6 +279,33 @@ impl SessionManager {
     }
 
     /// Cierra una sesión por ID si hay más de una viva.
+    /// Elimina las sesiones cuyo shell ya terminó. Devuelve los identificadores
+    /// retirados para que la UI pueda quitar sus pestañas y espacios.
+    ///
+    /// Sin esto, ejecutar `exit` dejaba la sesión muerta en el gestor y la
+    /// ventana se quedaba congelada mostrando la última rejilla.
+    pub fn reap_exited(&mut self) -> Vec<usize> {
+        let mut removed = Vec::new();
+        self.sessions.retain(|&id, session| {
+            let alive = !session.has_exited();
+            if !alive {
+                removed.push(id);
+            }
+            alive
+        });
+
+        if !self.sessions.is_empty() && !self.sessions.contains_key(&self.active_id) {
+            self.active_id = *self.sessions.keys().next().unwrap();
+        }
+
+        removed
+    }
+
+    /// Cierra una sesión por su identificador.
+    ///
+    /// La última sesión viva no se puede cerrar desde aquí: una terminal sin
+    /// sesiones debe cerrar su ventana, no quedarse hungueada. Eso lo decide la
+    /// UI, que llama a `remove_window` cuando el gestor se queda vacío.
     pub fn close(&mut self, id: usize) -> bool {
         if self.sessions.len() > 1 && self.sessions.contains_key(&id) {
             self.sessions.remove(&id);
