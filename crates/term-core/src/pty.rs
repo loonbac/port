@@ -195,24 +195,25 @@ impl Pty {
     /// descendiente que no es otro shell ni un auxiliar del prompt. El resultado
     /// debe confirmarse en dos sondeos seguidos antes de devolverse, para que
     /// procesos muy breves (el prompt, hooks de entorno) nunca lleguen a la UI.
+    ///
+    /// La confirmación es simétrica: un valor, sea un programa o la ausencia de
+    /// él, necesita dos lecturas seguidas para volverse el estable. Sin esto un
+    /// programa que termina se quedaría congelado en la pestaña para siempre.
     pub fn foreground_app(&self) -> Option<RunningApp> {
         let raw = self.detect_foreground_app();
 
         let mut stable = self.stable_app.borrow_mut();
         let mut pending = self.pending_app.borrow_mut();
 
-        match raw {
-            // Sigue igual el candidato pendiente: acumulasamples.
-            Some(ref app) if pending.0.as_ref() == Some(app) => {                pending.1 = pending.1.saturating_add(1);
-                if pending.1 >= STABILITY_SAMPLES {
-                    *stable = Some(app.clone());
-                }
-            }
-            // Cambió el candidato: empieza a contarlo desde uno.
-            other => {
-                pending.0 = other;
-                pending.1 = 1;
-            }
+        if pending.0 == raw {
+            pending.1 = pending.1.saturating_add(1);
+        } else {
+            pending.0 = raw;
+            pending.1 = 1;
+        }
+
+        if pending.1 >= STABILITY_SAMPLES {
+            *stable = pending.0.clone();
         }
 
         stable.clone()

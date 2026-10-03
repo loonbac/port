@@ -319,3 +319,38 @@ fn a_background_job_is_not_reported_as_foreground_app() {
         std::thread::sleep(Duration::from_millis(30));
     }
 }
+
+#[test]
+fn a_finished_program_stops_being_reported_as_foreground_app() {
+    let mut session = Session::spawn(plain_shell(), GridSize::new(60, 10)).expect("sesión");
+    std::thread::sleep(Duration::from_millis(300));
+
+    // Programa corto: se lanza y termina casi inmediatamente.
+    session.write(b"true\n").expect("lanzar job corto");
+    std::thread::sleep(Duration::from_millis(400));
+
+    // Tras estabilizarse en "ninguna app", debe seguir así aunque el valor
+    // anterior fuera un programa: no puede quedar congelado en la caché.
+    let mut cleared = false;
+    for _ in 0..40 {
+        session.pump();
+        if session.foreground_app().is_none() {
+            cleared = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    assert!(
+        cleared,
+        "un programa que ya terminó no debe seguir apareciendo en las pestañas"
+    );
+
+    // Y debe seguir limpio durante más sondeos (confirmación simétrica).
+    for _ in 0..20 {
+        session.pump();
+        assert!(
+            session.foreground_app().is_none(),
+            "la terminal en reposo debe seguir sin app en primer plano"
+        );
+    }
+}
