@@ -55,7 +55,7 @@ sin que el núcleo sepa que existe.
 | `Ctrl` `W` | Cerrar la pestaña actual |
 | `Ctrl` `Alt` `T` | Nuevo espacio (abre la barra lateral) |
 | `Alt` `1`..`9` | Cambiar de espacio |
-| `Ctrl` `+` / `Ctrl` `-` / `Ctrl` `0` | Aumentar / reducir / reiniciar fuente |
+| `Ctrl` `+` / `Ctrl` `-` / `Ctrl` `0` | Aumentar / reducir / reiniciar fuente (vía `shortcuts`) |
 
 ## Configuración
 
@@ -131,7 +131,7 @@ forma independiente.
 |---|---|---|
 | `transparency` | `AppearanceHook` | Opacidad del fondo de la ventana |
 | `font` | `AppearanceHook` | Familia, tamaño y fuentes de respaldo |
-| `font-zoom` | `AppearanceHook`, `InputHook` | Zoom interactivo con `Ctrl` `+` / `-` / `0` |
+| `font-zoom` | `AppearanceHook` | Estado del tamaño de fuente y operaciones de zoom (sin atajos) |
 | `shortcuts` | — | Asocia combinaciones de teclas a callbacks |
 | `menu-customizer` | `PluginManagerHook` | Reestiliza o reemplaza el gestor de plugins |
 | `herdr` | `AppearanceHook`, `InputHook`, `LayoutHook`, `SpaceHook` | Barra lateral de espacios, pestañas, detección de procesos en vivo, ancho ajustable y color acento del wallpaper |

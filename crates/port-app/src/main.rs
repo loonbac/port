@@ -9,6 +9,7 @@ mod view;
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::prelude::*;
@@ -44,7 +45,37 @@ fn main() {
         plugin_registry.register(TransparencyPlugin::default());
         plugin_registry.register(FontPlugin::new("FiraCode Nerd Font Mono"));
         plugin_registry.register(FontZoomPlugin::new(BASE_FONT_SIZE));
-        plugin_registry.register(ShortcutsPlugin::new());
+
+        // Los atajos de zoom se registran en el plugin de atajos, no en el de
+        // fuente: asi se pueden cambiar o quitar sin tocar font-zoom.
+        let font_zoom = Arc::new(FontZoomPlugin::new(BASE_FONT_SIZE));
+        let shortcuts = ShortcutsPlugin::new();
+        {
+            let zoom = Arc::clone(&font_zoom);
+            shortcuts.bind_str("ctrl+=", move || {
+                zoom.zoom_in();
+            });
+        }
+        {
+            let zoom = Arc::clone(&font_zoom);
+            shortcuts.bind_str("ctrl+shift+=", move || {
+                zoom.zoom_in();
+            });
+        }
+        {
+            let zoom = Arc::clone(&font_zoom);
+            shortcuts.bind_str("ctrl+-", move || {
+                zoom.zoom_out();
+            });
+        }
+        {
+            let zoom = Arc::clone(&font_zoom);
+            shortcuts.bind_str("ctrl+0", move || {
+                zoom.reset_zoom();
+            });
+        }
+        plugin_registry.register((*font_zoom).clone());
+        plugin_registry.register(shortcuts);
         plugin_registry.register(MenuCustomizerPlugin::default());
         plugin_registry.register(HerdrPlugin::new());
 

@@ -50,7 +50,7 @@ plugin can replace core behaviour without the core knowing it exists.
 | `Ctrl` `W` | Close current tab |
 | `Ctrl` `Alt` `T` | New space (opens the sidebar) |
 | `Alt` `1`..`9` | Switch space |
-| `Ctrl` `+` / `Ctrl` `-` / `Ctrl` `0` | Zoom font in / out / reset |
+| `Ctrl` `+` / `Ctrl` `-` / `Ctrl` `0` | Zoom font in / out / reset (via `shortcuts`) |
 
 ## Configuration
 
@@ -125,7 +125,7 @@ Official plugins live in **[loonbac/port-plugins](https://github.com/loonbac/por
 |---|---|---|
 | `transparency` | `AppearanceHook` | Window background opacity |
 | `font` | `AppearanceHook` | Font family, size and fallbacks |
-| `font-zoom` | `AppearanceHook`, `InputHook` | Interactive font zoom with `Ctrl` `+` / `-` / `0` |
+| `font-zoom` | `AppearanceHook` | Font size state and zoom operations (no key bindings) |
 | `shortcuts` | — | Bind custom key combinations to callbacks |
 | `menu-customizer` | `PluginManagerHook` | Restyle or fully replace the plugin manager |
 | `herdr` | `AppearanceHook`, `InputHook`, `LayoutHook`, `SpaceHook` | Spaces sidebar, tabs, live process detection, resizable layout, wallpaper accent colour |
