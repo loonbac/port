@@ -48,6 +48,10 @@ pub struct Pty {
     incoming: Receiver<Vec<u8>>,
     /// El hilo lector terminó: el otro extremo cerró el PTY.
     closed: Arc<AtomicBool>,
+    /// Descriptor del maestro del PTY. Permite preguntar al núcleo qué grupo de
+    /// procesos está en primer plano, que es lo que distingue un job en primer
+    /// plano de otro lanzado con `&`.
+    master_fd: Option<std::os::raw::c_int>,
     /// Último programa en primer plano ya confirmado como estable.
     stable_app: RefCell<Option<RunningApp>>,
     /// Candidato actual y cuántas sondeos seguidos lo han respaldado.
@@ -114,6 +118,7 @@ impl Pty {
             .map_err(std::io::Error::other)?;
 
         Ok(Self {
+            master_fd: pair.master.as_raw_fd(),
             master: pair.master,
             writer,
             child,
@@ -214,7 +219,12 @@ impl Pty {
     }
 
     /// Lectura cruda del proceso en primer plano, sin estabilizar.
+    ///
+    /// Solo se aceptan procesos que pertenecen al grupo de primer plano del
+    /// terminal. Un job lanzado con `&` sigue siendo hijo del shell, pero el
+    /// núcleo lo coloca en otro grupo, así que queda descartado.
     fn detect_foreground_app(&self) -> Option<RunningApp> {
+        let foreground = self.foreground_process_group();
         let mut pid = self.process_id()?;
 
         // El límite evita un bucle infinito si `/proc` devolviera un ciclo.
@@ -234,7 +244,11 @@ impl Pty {
                 }
                 if is_shell_binary(&app.bin) {
                     nested_shell = Some(child);
-                } else {
+                    continue;
+                }
+                // El shell en sí mismo pertenece al grupo en primer plano: si
+                // no hay job corriendo, la terminal está en reposo.
+                if is_in_group(app.pid, foreground) {
                     return Some(app);
                 }
             }
@@ -246,6 +260,33 @@ impl Pty {
         }
         None
     }
+
+    /// Grupo de procesos en primer plano del terminal, según el núcleo.
+    fn foreground_process_group(&self) -> Option<i32> {
+        let fd = self.master_fd?;
+        let pgid = unsafe { libc::tcgetpgrp(fd) };
+        if pgid < 0 { None } else { Some(pgid) }
+    }
+}
+
+/// Si un proceso pertenece al grupo indicado. Sin grupo conocido se acepta,
+/// para no perder la detección en sistemas donde la llamada falle.
+fn is_in_group(pid: u32, group: Option<i32>) -> bool {
+    match group {
+        None => true,
+        Some(group) => process_group_of(pid) == Some(group),
+    }
+}
+
+/// Grupo de procesos de un proceso, leído de `/proc/{pid}/stat` (campo 5).
+fn process_group_of(pid: u32) -> Option<i32> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // El nombre del proceso puede contener espacios y paréntesis, así que los
+    // campos útiles son los que van después del cierre del nombre.
+    let tail = stat.rsplit_once(')')?.1;
+    let fields: Vec<&str> = tail.split_whitespace().collect();
+    // tail[0] = state, tail[1] = ppid, tail[2] = pgrp
+    fields.get(2)?.parse().ok()
 }
 
 /// Programa que se está ejecutando en primer plano dentro de una sesión.

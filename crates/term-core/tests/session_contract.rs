@@ -290,3 +290,32 @@ fn a_running_program_becomes_the_foreground_app_after_two_samples() {
     }
     assert!(seen, "un proceso en primer plano debe detectarse como app");
 }
+
+#[test]
+fn a_background_job_is_not_reported_as_foreground_app() {
+    // Un shell con job control (`sh -i`) es necesario para que `&` cree un
+    // grupo de procesos distinto al del primer plano, como haría fish o bash.
+    let config = PtyConfig {
+        command: "/bin/sh".to_string(),
+        args: vec!["-i".to_string()],
+        cwd: None,
+    };
+    let mut session = Session::spawn(config, GridSize::new(60, 10)).expect("sesión");
+    std::thread::sleep(Duration::from_millis(400));
+
+    // Se lanza un job en segundo plano: sigue vivo, pero no está en primer plano.
+    session
+        .write(b"sleep 25 &\n")
+        .expect("lanzar job en background");
+    std::thread::sleep(Duration::from_millis(500));
+
+    for _ in 0..15 {
+        session.pump();
+        let app = session.foreground_app();
+        assert!(
+            app.is_none(),
+            "un job lanzado con `&` no debe aparecer como app en primer plano, se obtuvo: {app:?}"
+        );
+        std::thread::sleep(Duration::from_millis(30));
+    }
+}
