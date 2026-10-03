@@ -17,6 +17,7 @@ use std::sync::Arc;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 
 use crate::session::GridSize;
+use crate::sysinfo;
 
 /// Cómo arrancar el shell.
 #[derive(Clone, Debug)]
@@ -145,11 +146,8 @@ impl Pty {
 
         let mut bytes = first;
         bytes.extend_from_slice(&second);
-        loop {
-            match self.incoming.try_recv() {
-                Ok(chunk) => bytes.extend_from_slice(&chunk),
-                Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
-            }
+        while let Ok(chunk) = self.incoming.try_recv() {
+            bytes.extend_from_slice(&chunk);
         }
         bytes
     }
@@ -186,7 +184,7 @@ impl Pty {
     /// Obtiene el directorio de trabajo actual (cwd) del shell en tiempo real.
     pub fn current_working_directory(&self) -> Option<std::path::PathBuf> {
         let pid = self.process_id()?;
-        std::fs::read_link(format!("/proc/{pid}/cwd")).ok()
+        sysinfo::cwd_of(pid)
     }
 
     /// Detecta el programa que se está ejecutando en primer plano.
@@ -230,16 +228,17 @@ impl Pty {
 
         // El límite evita un bucle infinito si `/proc` devolviera un ciclo.
         for _ in 0..8 {
-            let children = read_children(pid);
+            let children = sysinfo::children_of(pid);
             if children.is_empty() {
                 return None;
             }
 
             let mut nested_shell = None;
             for child in children {
-                let Some(app) = describe_process(child) else {
+                let Some(bin) = sysinfo::name_of(child) else {
                     continue;
                 };
+                let app = RunningApp { pid: child, bin };
                 if is_prompt_helper(&app.bin) {
                     continue;
                 }
@@ -265,29 +264,17 @@ impl Pty {
     /// Grupo de procesos en primer plano del terminal, según el núcleo.
     fn foreground_process_group(&self) -> Option<i32> {
         let fd = self.master_fd?;
-        let pgid = unsafe { libc::tcgetpgrp(fd) };
-        if pgid < 0 { None } else { Some(pgid) }
+        sysinfo::foreground_group(fd)
     }
 }
 
 /// Si un proceso pertenece al grupo indicado. Sin grupo conocido se acepta,
-/// para no perder la detección en sistemas donde la llamada falle.
+/// para no perder la detección donde la plataforma no lo consulta.
 fn is_in_group(pid: u32, group: Option<i32>) -> bool {
     match group {
         None => true,
-        Some(group) => process_group_of(pid) == Some(group),
+        Some(group) => sysinfo::process_group_of(pid) == Some(group),
     }
-}
-
-/// Grupo de procesos de un proceso, leído de `/proc/{pid}/stat` (campo 5).
-fn process_group_of(pid: u32) -> Option<i32> {
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    // El nombre del proceso puede contener espacios y paréntesis, así que los
-    // campos útiles son los que van después del cierre del nombre.
-    let tail = stat.rsplit_once(')')?.1;
-    let fields: Vec<&str> = tail.split_whitespace().collect();
-    // tail[0] = state, tail[1] = ppid, tail[2] = pgrp
-    fields.get(2)?.parse().ok()
 }
 
 /// Programa que se está ejecutando en primer plano dentro de una sesión.
@@ -304,27 +291,6 @@ impl RunningApp {
     pub fn title(&self) -> String {
         self.bin.clone()
     }
-}
-
-/// Hijos directos de un proceso, leídos de `/proc/{pid}/task/{pid}/children`.
-fn read_children(pid: u32) -> Vec<u32> {
-    std::fs::read_to_string(format!("/proc/{pid}/task/{pid}/children"))
-        .map(|raw| {
-            raw.split_whitespace()
-                .filter_map(|token| token.parse().ok())
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// Nombre corto de un proceso, leído de `/proc/{pid}/comm`.
-fn describe_process(pid: u32) -> Option<RunningApp> {
-    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
-    let bin = comm.trim().to_lowercase();
-    if bin.is_empty() {
-        return None;
-    }
-    Some(RunningApp { pid, bin })
 }
 
 /// Si el binario es un shell (o un multiplexor) y por tanto debe atravesarse

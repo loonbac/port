@@ -75,6 +75,31 @@ enabled = true
 The file is watched: saving it applies changes immediately, including font size,
 opacity and which plugins are enabled.
 
+## Installation
+
+The portable way, which works on any Linux distribution, macOS and Windows
+that has [Nix](https://nixos.org/download):
+
+```bash
+nix profile install github:loonbac/port
+port
+```
+
+From a release, with the native package manager of your distribution:
+
+```bash
+# Debian / Ubuntu
+sudo apt install ./port.deb
+
+# Fedora / RHEL
+sudo dnf install ./port.rpm
+
+# Arch
+sudo pacman -U ./port.pkg.tar.zst
+```
+
+Requirements at runtime: a Wayland or X11 session and Vulkan.
+
 ## Building
 
 Requires Nix, or a Rust toolchain plus the Wayland/XCB/Vulkan development

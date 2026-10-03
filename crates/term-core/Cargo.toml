@@ -8,6 +8,10 @@ description = "Terminal core for PORT: PTY lifecycle and VT grid, free of any UI
 [dependencies]
 alacritty_terminal = { workspace = true }
 portable-pty = { workspace = true }
+
 # Para consultar el grupo de procesos en primer plano del PTY (tcgetpgrp).
-# Ya entra en el grafo por `portable-pty`; declararlo aquí solo lo hace directo.
+# Ya entra en el grafo por `portable-pty`; declararlo aquí lo hace directo.
+# Solo en Unix: en Windows no existe y la app funciona sin ese dato.
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
+

@@ -16,9 +16,8 @@ use std::rc::Rc;
 
 use gpui::prelude::*;
 use gpui::{
-    anchored, deferred, App, Bounds, Context, FocusHandle, Font, FontFallbacks, FontStyle,
-    FontWeight, MouseButton, Pixels, Render, TextRun, Window, canvas, div, fill, point, px, rgb,
-    size,
+    anchored, canvas, deferred, div, fill, point, px, rgb, size, App, Bounds, Context, FocusHandle,
+    Font, FontFallbacks, FontStyle, FontWeight, MouseButton, Pixels, Render, TextRun, Window,
 };
 use port_plugin_api::{PluginInfo, PluginRegistry};
 use port_term_core::frame::{Frame, Rgb, Run, Style};
@@ -195,28 +194,25 @@ impl Render for TerminalView {
         }
 
         main_col = main_col.child(
-            div()
-                .flex_1()
-                .w_full()
-                .child(
-                    canvas(
-                        move |_bounds, _window, _cx| (),
-                        move |bounds, (), window, cx| {
-                            paint_frame(
-                                bounds,
-                                &frame,
-                                &metrics,
-                                effective_bg,
-                                &font_family,
-                                font_size,
-                                &font_fallbacks,
-                                window,
-                                cx,
-                            );
-                        },
-                    )
-                    .size_full(),
-                ),
+            div().flex_1().w_full().child(
+                canvas(
+                    move |_bounds, _window, _cx| (),
+                    move |bounds, (), window, cx| {
+                        paint_frame(
+                            bounds,
+                            &frame,
+                            &metrics,
+                            effective_bg,
+                            &font_family,
+                            font_size,
+                            &font_fallbacks,
+                            window,
+                            cx,
+                        );
+                    },
+                )
+                .size_full(),
+            ),
         );
 
         for bar in bottom_bars {
@@ -341,7 +337,11 @@ fn render_close_prompt(
         } else {
             rgb(0x161b22).into()
         };
-        let border: gpui::Hsla = if focused { accent } else { rgb(0x30363d).into() };
+        let border: gpui::Hsla = if focused {
+            accent
+        } else {
+            rgb(0x30363d).into()
+        };
         let text: gpui::Hsla = if focused {
             rgb(0xffffff).into()
         } else {
@@ -351,13 +351,7 @@ fn render_close_prompt(
         let mut inner = div().flex().flex_row().items_center().gap(px(8.0));
         // Punto de foco: aparece solo en la opción elegida.
         inner = if focused {
-            inner.child(
-                div()
-                    .w(px(7.0))
-                    .h(px(7.0))
-                    .rounded(px(4.0))
-                    .bg(accent),
-            )
+            inner.child(div().w(px(7.0)).h(px(7.0)).rounded(px(4.0)).bg(accent))
         } else {
             // Marcador de posición para que el texto no salte al aparecer.
             inner.child(div().w(px(7.0)).h(px(7.0)))
@@ -406,48 +400,46 @@ fn render_close_prompt(
     );
 
     deferred(
-        anchored()
-            .position(point(px(left), px(top)))
-            .child(
-                div()
-                    .w(px(440.0))
-                    .p(px(16.0))
-                    .bg(rgb(0x0d1117))
-                    .border_1()
-                    .border_color(rgb(0xf0883e))
-                    .flex()
-                    .flex_col()
-                    .gap(px(12.0))
-                    .child(
-                        div()
-                            .text_size(px(14.0))
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(rgb(0xf0883e))
-                            .child("Hay procesos en ejecucion"),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(12.0))
-                            .text_color(rgb(0x8b949e))
-                            .child("Si cierras la terminal estos procesos se perderan:"),
-                    )
-                    .child(rows)
-                    .child(
-                        div()
-                            .text_size(px(11.0))
-                            .text_color(rgb(0x6e7681))
-                            .child("[←/→] Elegir   [Enter] Confirmar   [Esc] Cancelar"),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .justify_center()
-                            .gap(px(12.0))
-                            .child(cancel_btn)
-                            .child(confirm_btn),
-                    ),
-            ),
+        anchored().position(point(px(left), px(top))).child(
+            div()
+                .w(px(440.0))
+                .p(px(16.0))
+                .bg(rgb(0x0d1117))
+                .border_1()
+                .border_color(rgb(0xf0883e))
+                .flex()
+                .flex_col()
+                .gap(px(12.0))
+                .child(
+                    div()
+                        .text_size(px(14.0))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(rgb(0xf0883e))
+                        .child("Hay procesos en ejecucion"),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(rgb(0x8b949e))
+                        .child("Si cierras la terminal estos procesos se perderan:"),
+                )
+                .child(rows)
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(rgb(0x6e7681))
+                        .child("[←/→] Elegir   [Enter] Confirmar   [Esc] Cancelar"),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .justify_center()
+                        .gap(px(12.0))
+                        .child(cancel_btn)
+                        .child(confirm_btn),
+                ),
+        ),
     )
     .priority(200)
 }
@@ -516,13 +508,7 @@ fn render_core_plugin_menu(
                             .bg(badge_bg)
                             .border_1()
                             .border_color(badge_border)
-                            .child(
-                                div()
-                                    .w(px(6.0))
-                                    .h(px(6.0))
-                                    .rounded(px(3.0))
-                                    .bg(dot_color),
-                            )
+                            .child(div().w(px(6.0)).h(px(6.0)).rounded(px(3.0)).bg(dot_color))
                             .child(
                                 div()
                                     .text_size(px(11.0))
@@ -642,12 +628,7 @@ fn render_core_plugin_menu(
         )
         .child(list);
 
-    deferred(
-        anchored()
-            .position(point(px(left), px(top)))
-            .child(modal),
-    )
-    .priority(100)
+    deferred(anchored().position(point(px(left), px(top))).child(modal)).priority(100)
 }
 
 /// Pinta el cuadro completo: quads de fondo, glifos geométricos y texto.
@@ -726,11 +707,10 @@ fn paint_frame(
                     (false, false) => &regular,
                 };
 
-                let mut col_offset = 0usize;
                 let mut text_buf = String::with_capacity(run.text.len());
                 let mut text_start_col = 0usize;
 
-                for ch in run.text.chars() {
+                for (col_offset, ch) in run.text.chars().enumerate() {
                     let char_x: f32 = (left + cell_width * col_offset as f32).into();
                     let char_y: f32 = top.into();
 
@@ -755,7 +735,12 @@ fn paint_frame(
                             let text_x = left + cell_width * text_start_col as f32;
                             window
                                 .text_system()
-                                .shape_line(text_buf.clone().into(), font_size, &[text_run], Some(cell_width))
+                                .shape_line(
+                                    text_buf.clone().into(),
+                                    font_size,
+                                    &[text_run],
+                                    Some(cell_width),
+                                )
                                 .paint(point(text_x, top), cell_height, window, cx)
                                 .ok();
                             text_buf.clear();
@@ -766,7 +751,6 @@ fn paint_frame(
                         }
                         text_buf.push(ch);
                     }
-                    col_offset += 1;
                 }
 
                 // Pintamos cualquier texto restante al final del run
@@ -840,7 +824,10 @@ fn paint_braille(
             let dot_x = x + offset_x + col * col_step;
             let dot_y = y + offset_y + row * row_step;
             window.paint_quad(gpui::quad(
-                Bounds::new(point(px(dot_x), px(dot_y)), size(px(dot_size), px(dot_size))),
+                Bounds::new(
+                    point(px(dot_x), px(dot_y)),
+                    size(px(dot_size), px(dot_size)),
+                ),
                 radius,
                 color,
                 gpui::Edges::default(),
@@ -951,7 +938,6 @@ fn style_of(run: &Run, is_cursor: bool) -> Style {
 }
 
 fn color(rgb_value: Rgb) -> gpui::Hsla {
-    let packed =
-        (rgb_value.r as u32) << 16 | (rgb_value.g as u32) << 8 | (rgb_value.b as u32);
+    let packed = (rgb_value.r as u32) << 16 | (rgb_value.g as u32) << 8 | (rgb_value.b as u32);
     rgb(packed).into()
 }

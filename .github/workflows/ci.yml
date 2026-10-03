@@ -1,0 +1,276 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# CI de PORT
+#
+# Hardening (leer antes de tocar este archivo):
+#
+# 1. TODAS las acciones están fijadas a un SHA completo de commit, nunca a una
+#    etiqueta como `@v4`. Una etiqueta es móvil: quien controle el repo de la
+#    acción puede reescribirla y ejecutar código arbitrario con los permisos de
+#    este workflow. Fue exactamente el ataque a tj-actions/changed-files.
+#    Al actualizar una acción, sube el SHA y el comentario de versión.
+# 2. Solo se usan acciones propiedad de GitHub (`actions/*`). No hay acciones de
+#    terceros: cada dependencia externa es superficie de ataque.
+# 3. `permissions: contents: read` por defecto. El workflow de release lo eleva a
+#    `contents: write` únicamente en el job que publica.
+# 4. `persist-credentials: false` en cada checkout: el token no se queda en
+#    `.git/config` donde un paso posterior podría leerlo.
+# 5. Este workflow NO corre con secretos en PRs de forks, y jamás usa
+#    `pull_request_target`, que da al código del atacante los permisos del repo.
+# 6. Las imágenes de contenedor aún usan etiqueta (`fedora:40`), no digest. Un
+#    digest inventado es peor que una etiqueta: hay que resolverlo con acceso al
+#    registro (`docker manifest inspect` o `crane digest`) y fijarlo aquí. Está
+#    anotado a propósito para que quede pendiente, no para que pase desapercibido.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+# Sin permisos por defecto: cada job pide lo que necesita.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  BIN: port
+  # Versión de Rust usada en todos los jobs. Fijarla aquí evita que un cambio
+  # de toolchain rompa la build de forma distinta en cada runner.
+  RUST_VERSION: 1.90.0
+
+jobs:
+  # ── Linux vía Nix: build hermética, vale para cualquier distro ───────────────
+  # Nix es lo que hace que "instalable en todas las distros" sea cierto de verdad:
+  # las librerías vienen del store y no del sistema, así que no importa si el
+  # runner es Debian, Fedora o Arch.
+  linux-nix:
+    name: linux / nix / ${{ matrix.distro }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: ubuntu-24.04
+            runner: ubuntu-24.04
+          - distro: fedora-40
+            runner: ubuntu-24.04
+            container: 'fedora:40'
+          - distro: debian-12
+            runner: ubuntu-24.04
+            container: 'debian:12'
+
+    container: ${{ matrix.container }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Instalar Nix (usuario único, sin daemon)
+        run: |
+          set -eu
+          if [ "$(id -u)" = "0" ]; then
+            HOME_DIR=/root
+          else
+            HOME_DIR="$HOME"
+          fi
+          export HOME="$HOME_DIR"
+          export NIX_INSTALL_DIR="$HOME_DIR/.nix"
+          # Solo https: nunca curl sobre http en una imagen de CI.
+          curl -fsSL --proto '=https' --tlsv1.2 https://nixos.org/nix/install \
+            | sh -s -- --no-daemon
+          echo "$HOME_DIR/.nix-profile/bin" >> "$GITHUB_PATH"
+
+      - name: Cache de Nix
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.nix-profile
+            /nix/var/nix/gcroots
+            /nix/store
+          key: nix-${{ matrix.distro }}-${{ hashFiles('flake.nix', 'Cargo.lock') }}
+          restore-keys: |
+            nix-${{ matrix.distro }}-
+
+      - name: Build
+        run: nix build .#port --print-build-logs
+
+      - name: Test
+        run: nix develop --command cargo test --workspace --locked
+
+      - name: Subir binario
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: port-linux-${{ matrix.distro }}
+          path: result/bin/${{ env.BIN }}
+          if-no-files-found: error
+          retention-days: 7
+
+  # ── Linux nativo: el toolchain del sistema, sin Nix ─────────────────────────
+  # Comprueba que la build no depende de Nix. Es el camino que usaría alguien
+  # que solo tenga cargo y las librerías de desarrollo instaladas.
+  linux-native:
+    name: linux-native / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-22.04]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Dependencias del sistema
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config cmake nasm python3 \
+            libxcb1-dev libxkbcommon-dev \
+            libwayland-dev libvulkan-dev libfreetype-dev \
+            libfontconfig-dev libharfbuzz-dev
+
+      # rustup viene preinstalado en los runners de GitHub. Se usa en lugar de
+      # una acción de terceros para no añadir superficie de ataque.
+      - name: Instalar Rust
+        run: |
+          set -eu
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup default "$RUST_VERSION"
+          rustc --version
+
+      - name: Cache de compilaciones
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ matrix.os }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-${{ matrix.os }}-
+
+      - name: Test
+        run: cargo test --workspace --locked
+
+      - name: Build release
+        run: cargo build --release -p port --locked
+
+      - name: Subir binario
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: port-native-${{ matrix.os }}
+          path: target/release/${{ env.BIN }}
+          if-no-files-found: error
+          retention-days: 7
+
+  # ── macOS ──────────────────────────────────────────────────────────────────
+  # `continue-on-error` porque gpui 0.2.2 todavía no soporta bien macOS; el job
+  # informa del estado real en vez de ocultarlo.
+  macos:
+    name: macos
+    runs-on: macos-14
+    timeout-minutes: 45
+    continue-on-error: true
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Instalar Rust
+        run: |
+          set -eu
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup default "$RUST_VERSION"
+          rustc --version
+
+      - name: Test
+        run: cargo test --workspace --locked
+
+      - name: Build release
+        run: cargo build --release -p port --locked
+
+      - name: Subir binario
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: port-macos
+          path: target/release/${{ env.BIN }}
+          if-no-files-found: error
+          retention-days: 7
+
+  # ── Windows: el núcleo es portable ────────────────────────────────────────
+  # term-core no lee /proc ni usa libc en Windows, así que compila y se prueba
+  # allí. La capa GPUI completa aún no está soportada, y este job lo dice claro
+  # en vez de dejar que parezca que la app entera funciona.
+  windows:
+    name: windows / core
+    runs-on: windows-latest
+    timeout-minutes: 45
+    continue-on-error: true
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Instalar Rust
+        run: |
+          set -eu
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup default "$RUST_VERSION"
+          rustc --version
+
+      - name: Test del núcleo
+        run: cargo test -p port-term-core --lib --locked
+
+      - name: Test del API de plugins
+        run: cargo test -p port-plugin-api --lib --locked
+
+  # ── Lint ───────────────────────────────────────────────────────────────────
+  lint:
+    name: fmt + clippy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Instalar Rust
+        run: |
+          set -eu
+          rustup toolchain install "$RUST_VERSION" --profile minimal --component clippy,rustfmt
+          rustup default "$RUST_VERSION"
+
+      - name: Formato
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings

@@ -80,7 +80,11 @@ fn shell_output_reaches_the_grid() {
         .write(b"echo hola-port\n")
         .expect("escribir en el shell");
 
-    let text = pump_until_quiet(&mut session, Duration::from_millis(150), Duration::from_secs(10));
+    let text = pump_until_quiet(
+        &mut session,
+        Duration::from_millis(150),
+        Duration::from_secs(10),
+    );
     assert!(
         text.contains("hola-port"),
         "el eco del shell debe aparecer en la rejilla:\n{text}"
@@ -96,7 +100,11 @@ fn multiline_output_advances_rows() {
         .write(b"echo uno; echo dos\n")
         .expect("escribir en el shell");
 
-    let text = pump_until_quiet(&mut session, Duration::from_millis(150), Duration::from_secs(10));
+    let text = pump_until_quiet(
+        &mut session,
+        Duration::from_millis(150),
+        Duration::from_secs(10),
+    );
     assert!(text.contains("uno"), "falta la primera línea:\n{text}");
     assert!(text.contains("dos"), "falta la segunda línea:\n{text}");
     let uno = text.find("uno").unwrap();
@@ -107,12 +115,18 @@ fn multiline_output_advances_rows() {
 #[test]
 fn resize_is_applied_to_the_session() {
     let mut session = Session::spawn(plain_shell(), GridSize::new(40, 8)).expect("sesión");
-    session.resize(GridSize::new(100, 30)).expect("redimensionar");
+    session
+        .resize(GridSize::new(100, 30))
+        .expect("redimensionar");
 
     assert_eq!(session.size(), GridSize::new(100, 30));
     assert_eq!(session.frame().columns, 100);
     session.write(b"echo sigue\n").expect("escribir");
-    let text = pump_until_quiet(&mut session, Duration::from_millis(150), Duration::from_secs(10));
+    let text = pump_until_quiet(
+        &mut session,
+        Duration::from_millis(150),
+        Duration::from_secs(10),
+    );
     assert!(text.contains("sigue"), "el shell debe seguir vivo:\n{text}");
 }
 
@@ -150,7 +164,11 @@ fn cursor_key_mode_is_normal_until_the_program_enables_application_keys() {
     session
         .write(b"printf '\\033[?1h'\n")
         .expect("activar modo aplicación");
-    pump_until_quiet(&mut session, Duration::from_millis(150), Duration::from_secs(10));
+    pump_until_quiet(
+        &mut session,
+        Duration::from_millis(150),
+        Duration::from_secs(10),
+    );
 
     assert_eq!(
         session.cursor_key_mode(),
@@ -184,17 +202,23 @@ fn fish_device_queries_are_replied_automatically_without_blocking() {
         }
         std::thread::sleep(Duration::from_millis(30));
     }
-    assert!(interactive, "fish debe responder con el prompt interactivo de inmediato sin esperar 10s");
+    assert!(
+        interactive,
+        "fish debe responder con el prompt interactivo de inmediato sin esperar 10s"
+    );
 }
 
 #[test]
 fn session_manager_manages_multiple_isolated_spaces() {
-    let mut manager = SessionManager::new(plain_shell(), GridSize::new(60, 10)).expect("crear manager");
+    let mut manager =
+        SessionManager::new(plain_shell(), GridSize::new(60, 10)).expect("crear manager");
     assert_eq!(manager.len(), 1);
     assert_eq!(manager.active_index(), 0);
 
     // Escribimos en la sesión 0
-    manager.write(b"echo SESION_CERO\n").expect("escribir en sesion 0");
+    manager
+        .write(b"echo SESION_CERO\n")
+        .expect("escribir en sesion 0");
     std::thread::sleep(Duration::from_millis(150));
     manager.pump();
     let frame0_text = manager
@@ -213,7 +237,9 @@ fn session_manager_manages_multiple_isolated_spaces() {
     assert_eq!(manager.active_index(), 1);
 
     // Escribimos en la sesión 1
-    manager.write(b"echo SESION_UNO\n").expect("escribir en sesion 1");
+    manager
+        .write(b"echo SESION_UNO\n")
+        .expect("escribir en sesion 1");
     std::thread::sleep(Duration::from_millis(150));
     manager.pump();
     let frame1_text = manager
@@ -224,7 +250,10 @@ fn session_manager_manages_multiple_isolated_spaces() {
         .collect::<Vec<_>>()
         .join("\n");
     assert!(frame1_text.contains("SESION_UNO"));
-    assert!(!frame1_text.contains("SESION_CERO"), "la sesión 1 debe estar completamente aislada de la 0");
+    assert!(
+        !frame1_text.contains("SESION_CERO"),
+        "la sesión 1 debe estar completamente aislada de la 0"
+    );
 
     // Conmutamos de vuelta a la sesión 0 (como al hacer clic en space-1)
     assert!(manager.select(0));
@@ -236,7 +265,10 @@ fn session_manager_manages_multiple_isolated_spaces() {
         .map(|r| r.runs.iter().map(|x| x.text.as_str()).collect::<String>())
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(back0_text.contains("SESION_CERO"), "la sesión 0 debe conservar intacto su contenido previo");
+    assert!(
+        back0_text.contains("SESION_CERO"),
+        "la sesión 0 debe conservar intacto su contenido previo"
+    );
     assert!(!back0_text.contains("SESION_UNO"));
 
     // Creamos una tercera sesión (sesión 2)
@@ -357,7 +389,8 @@ fn a_finished_program_stops_being_reported_as_foreground_app() {
 
 #[test]
 fn session_manager_reports_running_apps_across_all_sessions() {
-    let mut manager = SessionManager::new(plain_shell(), GridSize::new(60, 10)).expect("crear manager");
+    let mut manager =
+        SessionManager::new(plain_shell(), GridSize::new(60, 10)).expect("crear manager");
 
     // Sin nada corriendo, no hay programas en ninguna sesión.
     manager.pump();
@@ -386,14 +419,17 @@ fn session_manager_reports_running_apps_across_all_sessions() {
     // El reporte incluye el identificador de sesión, para poder cerrar el correcto.
     let running = manager.running_apps();
     assert!(
-        running.iter().any(|(id, app)| *id == 0 && app.bin == "sleep"),
+        running
+            .iter()
+            .any(|(id, app)| *id == 0 && app.bin == "sleep"),
         "debe reportarse la sesión 0 ejecutando 'sleep', se obtuvo: {running:?}"
     );
 }
 
 #[test]
 fn a_shell_that_exits_is_reaped_and_the_manager_empties() {
-    let mut manager = SessionManager::new(plain_shell(), GridSize::new(60, 10)).expect("crear manager");
+    let mut manager =
+        SessionManager::new(plain_shell(), GridSize::new(60, 10)).expect("crear manager");
     assert_eq!(manager.len(), 1);
 
     // Un shell que ejecuta `exit` termina por su cuenta.
@@ -419,7 +455,8 @@ fn a_shell_that_exits_is_reaped_and_the_manager_empties() {
 
 #[test]
 fn reaping_keeps_the_other_sessions_alive() {
-    let mut manager = SessionManager::new(plain_shell(), GridSize::new(60, 10)).expect("crear manager");
+    let mut manager =
+        SessionManager::new(plain_shell(), GridSize::new(60, 10)).expect("crear manager");
     let second = manager.spawn_session().expect("crear segunda sesion");
     assert_eq!(manager.len(), 2);
 

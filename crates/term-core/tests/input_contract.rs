@@ -11,10 +11,7 @@ fn plain(key: &str) -> Vec<u8> {
 #[test]
 fn plain_character_goes_through_as_utf8() {
     assert_eq!(
-        encode(
-            &Key::new("a").with_text("a"),
-            KeyMode::default()
-        ),
+        encode(&Key::new("a").with_text("a"), KeyMode::default()),
         Some(b"a".to_vec())
     );
 }
@@ -78,10 +75,7 @@ fn arrows_in_normal_and_application_mode() {
     let app = KeyMode {
         application_cursor: true,
     };
-    assert_eq!(
-        encode(&Key::new("Up"), app),
-        Some(b"\x1bOA".to_vec())
-    );
+    assert_eq!(encode(&Key::new("Up"), app), Some(b"\x1bOA".to_vec()));
 }
 
 #[test]

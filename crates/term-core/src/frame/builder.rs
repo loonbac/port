@@ -15,7 +15,7 @@ use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{Term, TermMode};
 use alacritty_terminal::vte::ansi::{Color, CursorShape as VteCursorShape, NamedColor};
 
-use super::{Cursor, CursorRun, CursorShape, Frame, Row, Rgb, Run, Style};
+use super::{Cursor, CursorRun, CursorShape, Frame, Rgb, Row, Run, Style};
 
 /// Paleta de los 16 colores base, mientras no exista configuración ni tema.
 const PALETTE: [(NamedColor, Rgb); 16] = [
@@ -153,7 +153,10 @@ pub fn build<T: EventListener>(term: &Term<T>) -> Frame {
     // Fila y columna del cursor, necesarias durante la iteración porque la celda
     // se separa en su propio run mientras se construye la fila.
     let cursor_position = if show_cursor {
-        Some((cursor_point.line.0 + display_offset as i32, cursor_point.column.0))
+        Some((
+            cursor_point.line.0 + display_offset as i32,
+            cursor_point.column.0,
+        ))
     } else {
         None
     };
@@ -304,14 +307,14 @@ fn append_spaces(runs: &mut Vec<Run>, count: usize, force_new: bool) {
     if !force_new {
         if let Some(last) = runs.last_mut() {
             if last.style == plain {
-                last.text.extend(std::iter::repeat(' ').take(count));
+                last.text.extend(std::iter::repeat_n(' ', count));
                 last.columns += count;
                 return;
             }
         }
     }
     let mut text = String::with_capacity(count.max(16));
-    text.extend(std::iter::repeat(' ').take(count));
+    text.extend(std::iter::repeat_n(' ', count));
     runs.push(Run {
         text,
         style: plain,

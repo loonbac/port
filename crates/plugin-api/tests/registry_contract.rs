@@ -1,10 +1,10 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use gpui::{Element, div};
+use gpui::{div, Element};
 use port_plugin_api::{
-    AppearanceHook, InputHook, KeyAction, LayoutHook, Plugin, PluginConfig,
-    PluginManagerHook, PluginRegistry,
+    AppearanceHook, InputHook, KeyAction, LayoutHook, Plugin, PluginConfig, PluginManagerHook,
+    PluginRegistry,
 };
 use port_term_core::frame::Rgb;
 use port_term_core::input::Key;
@@ -380,19 +380,23 @@ fn registry_reloads_config_in_real_time_when_modified() {
     assert_eq!(font_size.load(Ordering::SeqCst), 14);
 
     // Comprobación inicial: no ha habido modificaciones
-    assert_eq!(registry.reload_if_modified().unwrap(), false);
+    assert!(!registry.reload_if_modified().unwrap());
 
     // Modificamos el archivo externamente
     std::thread::sleep(std::time::Duration::from_millis(50));
     let content = std::fs::read_to_string(&path).unwrap();
-    std::fs::write(&path, content.replace("default_size = 14", "default_size = 24")).unwrap();
+    std::fs::write(
+        &path,
+        content.replace("default_size = 14", "default_size = 24"),
+    )
+    .unwrap();
 
     // Ahora reload_if_modified detecta el cambio y actualiza el plugin en caliente
-    assert_eq!(registry.reload_if_modified().unwrap(), true);
+    assert!(registry.reload_if_modified().unwrap());
     assert_eq!(font_size.load(Ordering::SeqCst), 24);
 
     // Comprobación posterior: ya está sincronizado
-    assert_eq!(registry.reload_if_modified().unwrap(), false);
+    assert!(!registry.reload_if_modified().unwrap());
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -420,9 +424,11 @@ impl port_plugin_api::Service for CountingService {
             "add" => {
                 let amount = match args.first() {
                     Some(port_plugin_api::Arg::Num(n)) => *n,
-                    _ => return Some(Err(port_plugin_api::ServiceError::Failed(
-                        "add requiere un número".to_string(),
-                    ))),
+                    _ => {
+                        return Some(Err(port_plugin_api::ServiceError::Failed(
+                            "add requiere un número".to_string(),
+                        )))
+                    }
                 };
                 Some(Ok(port_plugin_api::Ret::Num(100.0 + amount)))
             }
@@ -494,5 +500,8 @@ fn a_service_action_can_fail_with_a_reason() {
         Err(ServiceError::Failed("add requiere un número".to_string()))
     );
     // Y con el argumento correcto, funciona.
-    assert_eq!(services.call("counter", "add", &[Arg::Num(1.0)]), Ok(Ret::Num(101.0)));
+    assert_eq!(
+        services.call("counter", "add", &[Arg::Num(1.0)]),
+        Ok(Ret::Num(101.0))
+    );
 }

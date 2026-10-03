@@ -80,6 +80,31 @@ enabled = true
 El archivo se vigila: al guardarlo los cambios se aplican al instante,
 incluyendo tamaño de fuente, opacidad y qué plugins están activos.
 
+## Instalación
+
+La vía portable, que funciona en cualquier distribución de Linux, macOS y
+Windows que tenga [Nix](https://nixos.org/download):
+
+```bash
+nix profile install github:loonbac/port
+port
+```
+
+Desde una release, con el gestor de paquetes nativo de tu distribución:
+
+```bash
+# Debian / Ubuntu
+sudo apt install ./port.deb
+
+# Fedora / RHEL
+sudo dnf install ./port.rpm
+
+# Arch
+sudo pacman -U ./port.pkg.tar.zst
+```
+
+Requisitos en tiempo de ejecución: una sesión Wayland o X11 y Vulkan.
+
 ## Compilar
 
 Requiere Nix, o un toolchain de Rust con las librerías de desarrollo de

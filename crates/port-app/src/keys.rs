@@ -47,8 +47,8 @@ fn core_name(key: &str) -> String {
         "tab" => "Tab".to_string(),
         "escape" | "esc" => "Escape".to_string(),
         "space" => " ".to_string(),
-        "up" | "down" | "left" | "right" | "home" | "end" | "delete" | "insert"
-        | "pageup" | "pagedown" => capitalize(key),
+        "up" | "down" | "left" | "right" | "home" | "end" | "delete" | "insert" | "pageup"
+        | "pagedown" => capitalize(key),
         other if is_function_key(other) => capitalize(other),
         // Letras, dígitos y signos ya vienen como los ve el layout.
         other => other.to_string(),
@@ -74,14 +74,13 @@ fn capitalize(key: &str) -> String {
 mod tests {
     use super::*;
     use gpui::Modifiers;
-    use port_term_core::input::{KeyMode, encode};
+    use port_term_core::input::{encode, KeyMode};
 
     fn keystroke(key: &str, key_char: Option<&str>, modifiers: Modifiers) -> Keystroke {
         Keystroke {
             modifiers,
             key: key.to_string(),
             key_char: key_char.map(str::to_string),
-            ..Default::default()
         }
     }
 
@@ -108,15 +107,16 @@ mod tests {
     fn function_keys_are_translated() {
         assert_eq!(bytes("f1", None, none()), Some(b"\x1bOP".to_vec()));
         assert_eq!(bytes("f12", None, none()), Some(b"\x1b[24~".to_vec()));
-        assert_eq!(bytes("f13", None, none()), None, "F13 no existe en este teclado");
+        assert_eq!(
+            bytes("f13", None, none()),
+            None,
+            "F13 no existe en este teclado"
+        );
     }
 
     #[test]
     fn text_goes_through_as_utf8() {
-        assert_eq!(
-            bytes("a", Some("a"), none()),
-            Some("a".as_bytes().to_vec())
-        );
+        assert_eq!(bytes("a", Some("a"), none()), Some("a".as_bytes().to_vec()));
         assert_eq!(
             bytes("n", Some("ñ"), none()),
             Some("ñ".as_bytes().to_vec()),
@@ -154,9 +154,6 @@ mod tests {
         let keystroke = keystroke("right", None, none());
         let key = to_core_key(&keystroke).expect("flecha derecha");
         assert_eq!(encode(&key, KeyMode::NORMAL), Some(b"\x1b[C".to_vec()));
-        assert_eq!(
-            encode(&key, KeyMode::APPLICATION),
-            Some(b"\x1bOC".to_vec())
-        );
+        assert_eq!(encode(&key, KeyMode::APPLICATION), Some(b"\x1bOC".to_vec()));
     }
 }

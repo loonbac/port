@@ -327,7 +327,9 @@ impl SessionManager {
 
     /// Referencia mutable a la sesión activa.
     pub fn active_session_mut(&mut self) -> &mut Session {
-        self.sessions.get_mut(&self.active_id).expect("sesión activa")
+        self.sessions
+            .get_mut(&self.active_id)
+            .expect("sesión activa")
     }
 
     /// ID de la sesión activa actual.
@@ -416,7 +418,9 @@ impl SessionManager {
 
     /// Obtiene el directorio de trabajo de una sesión por su ID.
     pub fn session_cwd(&self, id: usize) -> Option<std::path::PathBuf> {
-        self.sessions.get(&id).and_then(|s| s.current_working_directory())
+        self.sessions
+            .get(&id)
+            .and_then(|s| s.current_working_directory())
     }
 
     /// Obtiene el nombre de la carpeta de una sesión por su ID.

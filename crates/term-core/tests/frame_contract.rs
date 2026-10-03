@@ -143,12 +143,17 @@ fn cursor_cell_is_delivered_as_its_own_run() {
 
     let frame = build(&term);
     let cursor = frame.cursor.expect("cursor");
-    let cursor_run = frame.cursor_run.expect("la celda del cursor debelocalizarse");
+    let cursor_run = frame
+        .cursor_run
+        .expect("la celda del cursor debelocalizarse");
 
     assert_eq!(cursor_run.row, cursor.row);
     let row = &frame.rows[cursor_run.row];
     let run = &row.runs[cursor_run.run_index];
-    assert_eq!(run.text, "b", "el run del cursor debe traer solo su carácter");
+    assert_eq!(
+        run.text, "b",
+        "el run del cursor debe traer solo su carácter"
+    );
     assert_eq!(run.columns, 1);
     assert_eq!(cursor.column, 1);
 }
@@ -161,11 +166,17 @@ fn cursor_on_blank_keeps_a_run_to_paint_the_block() {
     feed(&mut term, b"ab");
 
     let frame = build(&term);
-    let cursor_run = frame.cursor_run.expect("la celda del cursor debe localizarse");
+    let cursor_run = frame
+        .cursor_run
+        .expect("la celda del cursor debe localizarse");
     let row = &frame.rows[cursor_run.row];
     let run = &row.runs[cursor_run.run_index];
 
-    assert_eq!(cursor_run.run_index, row.runs.len() - 1, "debe ser el último run");
+    assert_eq!(
+        cursor_run.run_index,
+        row.runs.len() - 1,
+        "debe ser el último run"
+    );
     assert_eq!(run.columns, 1);
     assert_eq!(run.text, " ");
 }
@@ -178,7 +189,10 @@ fn cursor_cell_survives_trailing_blank_trimming() {
     let frame = build(&term);
     let cursor_run = frame.cursor_run.expect("cursor");
     let run = &frame.rows[cursor_run.row].runs[cursor_run.run_index];
-    assert!(!run.text.is_empty(), "el recorte no debe borrar la celda del cursor");
+    assert!(
+        !run.text.is_empty(),
+        "el recorte no debe borrar la celda del cursor"
+    );
 }
 
 #[test]

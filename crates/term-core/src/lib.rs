@@ -12,8 +12,11 @@
 //!   Aísla a la UI de los tipos de `alacritty_terminal`.
 //! - [`pty`]: el proceso de shell y su tubería. Adaptador del sistema operativo.
 //! - [`session`]: caso de uso que coordina PTY, rejilla y viewport.
+//! - [`sysinfo`]: lectura de datos del proceso shell (cwd, grupo en primer plano,
+//!   nombre del ejecutable) aislando las diferencias entre sistemas.
 
 pub mod frame;
 pub mod input;
 pub mod pty;
 pub mod session;
+pub mod sysinfo;

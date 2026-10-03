@@ -243,11 +243,7 @@ impl ConfigFile {
     }
 
     /// Guarda o actualiza la configuración de un plugin específico en el archivo.
-    pub fn save_plugin(
-        path: &Path,
-        plugin_id: &str,
-        config: &PluginConfig,
-    ) -> std::io::Result<()> {
+    pub fn save_plugin(path: &Path, plugin_id: &str, config: &PluginConfig) -> std::io::Result<()> {
         let content = if path.exists() {
             std::fs::read_to_string(path)?
         } else {

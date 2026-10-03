@@ -2,3 +2,8 @@
 __pycache__/
 *.pyc
 
+
+# Salidas de empaquetado local (los .deb/.rpm/.AppImage definitivos los
+# genera GitHub Actions, no se versionan).
+/dist
+/result

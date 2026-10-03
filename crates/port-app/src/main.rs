@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use gpui::prelude::*;
 use gpui::{
-    App, Application, Bounds, WindowBackgroundAppearance, WindowBounds, WindowOptions, px, size,
+    px, size, App, Application, Bounds, WindowBackgroundAppearance, WindowBounds, WindowOptions,
 };
 use port_plugin_api::{KeyAction, PluginRegistry};
 use port_plugin_close_guard::CloseGuardPlugin;
@@ -243,12 +243,14 @@ fn main() {
         // directorio de trabajo cambia (cd) o cuando cambia el programa en primer plano.
         let session_for_poller = Rc::clone(&session_manager);
         let plugins_for_poller = Rc::clone(&plugins);
-        let window_for_poller = window.clone();
+        let window_for_poller = window;
         let mut last_cwd = None;
         let mut last_app = None;
         cx.spawn(async move |cx| {
             loop {
-                cx.background_executor().timer(Duration::from_millis(16)).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(16))
+                    .await;
                 let (changed, cwd, app, exited, empty) = {
                     let mut mgr = session_for_poller.borrow_mut();
                     let c = mgr.pump();
@@ -268,9 +270,11 @@ fn main() {
 
                 // Sin sesiones no hay terminal que mostrar: se cierra la ventana.
                 if empty {
-                    window_for_poller.update(cx, |_, window, _cx| {
-                        window.remove_window();
-                    }).ok();
+                    window_for_poller
+                        .update(cx, |_, window, _cx| {
+                            window.remove_window();
+                        })
+                        .ok();
                     break;
                 }
 
@@ -283,7 +287,9 @@ fn main() {
                     last_app = app;
                 }
                 if changed || cwd_changed || app_changed || !exited.is_empty() {
-                    window_for_poller.update(cx, |_, window, _cx| window.refresh()).ok();
+                    window_for_poller
+                        .update(cx, |_, window, _cx| window.refresh())
+                        .ok();
                 }
             }
         })
@@ -291,17 +297,19 @@ fn main() {
 
         // Vigila el archivo de configuración y lo recarga en tiempo real ante cualquier cambio en disco.
         let plugins_for_watcher = Rc::clone(&plugins);
-        let window_for_watcher = window.clone();
-        cx.spawn(async move |cx| {
-            loop {
-                cx.background_executor().timer(Duration::from_millis(150)).await;
-                let reloaded = plugins_for_watcher
-                    .borrow_mut()
-                    .reload_if_modified()
-                    .unwrap_or(false);
-                if reloaded {
-                    window_for_watcher.update(cx, |_, window, _cx| window.refresh()).ok();
-                }
+        let window_for_watcher = window;
+        cx.spawn(async move |cx| loop {
+            cx.background_executor()
+                .timer(Duration::from_millis(150))
+                .await;
+            let reloaded = plugins_for_watcher
+                .borrow_mut()
+                .reload_if_modified()
+                .unwrap_or(false);
+            if reloaded {
+                window_for_watcher
+                    .update(cx, |_, window, _cx| window.refresh())
+                    .ok();
             }
         })
         .detach();

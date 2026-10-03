@@ -42,10 +42,7 @@ pub enum ServiceError {
     /// Ese identificador no corresponde a ningún plugin activo.
     UnknownService(String),
     /// El servicio existe pero no expone esa acción.
-    UnknownAction {
-        service: String,
-        action: String,
-    },
+    UnknownAction { service: String, action: String },
     /// La acción se ejecutó pero devolvió un fallo.
     Failed(String),
 }
@@ -105,14 +102,12 @@ impl Services {
             }
         };
 
-        service
-            .invoke(action, args)
-            .unwrap_or_else(|| {
-                Err(ServiceError::UnknownAction {
-                    service: service_id.to_string(),
-                    action: action.to_string(),
-                })
+        service.invoke(action, args).unwrap_or_else(|| {
+            Err(ServiceError::UnknownAction {
+                service: service_id.to_string(),
+                action: action.to_string(),
             })
+        })
     }
 
     /// Identificadores de todos los servicios publicados.
@@ -514,7 +509,11 @@ impl PluginRegistry {
     }
 
     /// Renderizado visual del menú provisto por un plugin personalizado, si alguno lo define.
-    pub fn render_custom_menu(&self, plugins: &[PluginInfo], selected_index: usize) -> Option<AnyElement> {
+    pub fn render_custom_menu(
+        &self,
+        plugins: &[PluginInfo],
+        selected_index: usize,
+    ) -> Option<AnyElement> {
         for entry in &self.plugins {
             if entry.enabled {
                 if let Some(hook) = entry.plugin.plugin_manager_hook() {

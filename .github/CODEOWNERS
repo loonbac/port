@@ -1,0 +1,11 @@
+# Los workflows son superficie de ataque: quien puede tocarlos puede ejecutar
+# código arbitrario en los runners. Requieren revisión explícita.
+
+# Workflows y empaquetado: solo el propietario del repo.
+/.github/workflows/    @loonbac
+/scripts/package.sh   @loonbac
+/flake.nix            @loonbac
+/shell.nix            @loonbac
+
+# Resto del código: propietario también, mientras el proyecto es pequeño.
+*                     @loonbac
