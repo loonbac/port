@@ -175,6 +175,28 @@ pub trait SpaceHook {
     }
 }
 
+/// Decisión que un plugin toma cuando el usuario pide cerrar la ventana.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloseDecision {
+    /// Cerrar sin preguntar.
+    Allow,
+    /// Bloquear el cierre y pedir confirmación al usuario.
+    Confirm,
+}
+
+/// Capacidades sobre el ciclo de vida de la ventana.
+pub trait LifecycleHook {
+    /// Se consulta al pedir cerrar la ventana. `Confirm` cancela el cierre y
+    /// deja que el plugin muestre su diálogo.
+    fn on_close_request(&self) -> CloseDecision {
+        CloseDecision::Allow
+    }
+
+    /// Notifica al plugin de que el cierre ya fue aceptado, para que limpia su
+    /// estado de diálogo si lo tenía abierto.
+    fn on_close_confirmed(&self) {}
+}
+
 /// Interfaz base que todo plugin de PORT debe implementar.
 pub trait Plugin: 'static {
     /// Identificador único del plugin en formato kebab-case (ej. "transparency", "font-zoom").
@@ -210,6 +232,11 @@ pub trait Plugin: 'static {
 
     /// Hook de gestión de espacios de trabajo y sesiones, si el plugin lo implementa.
     fn space_hook(&self) -> Option<&dyn SpaceHook> {
+        None
+    }
+
+    /// Hook de ciclo de vida de la ventana, si el plugin lo implementa.
+    fn lifecycle_hook(&self) -> Option<&dyn LifecycleHook> {
         None
     }
 
@@ -574,6 +601,32 @@ impl PluginRegistry {
             }
         }
         None
+    }
+
+    /// Consulta a los plugins si el cierre de la ventana necesita confirmación.
+    /// Basta con que uno pida confirmar para bloquearlo.
+    pub fn close_decision(&self) -> CloseDecision {
+        for entry in &self.plugins {
+            if entry.enabled {
+                if let Some(hook) = entry.plugin.lifecycle_hook() {
+                    if hook.on_close_request() == CloseDecision::Confirm {
+                        return CloseDecision::Confirm;
+                    }
+                }
+            }
+        }
+        CloseDecision::Allow
+    }
+
+    /// Notifica a los plugins que el cierre fue aceptado.
+    pub fn on_close_confirmed(&self) {
+        for entry in &self.plugins {
+            if entry.enabled {
+                if let Some(hook) = entry.plugin.lifecycle_hook() {
+                    hook.on_close_confirmed();
+                }
+            }
+        }
     }
 
     /// Compatibilidad previa.

@@ -16,6 +16,7 @@ use gpui::{
     App, Application, Bounds, WindowBackgroundAppearance, WindowBounds, WindowOptions, px, size,
 };
 use port_plugin_api::{KeyAction, PluginRegistry};
+use port_plugin_close_guard::CloseGuardPlugin;
 use port_plugin_font::FontPlugin;
 use port_plugin_font_zoom::FontZoomPlugin;
 use port_plugin_herdr::HerdrPlugin;
@@ -27,7 +28,7 @@ use port_term_core::pty::PtyConfig;
 use port_term_core::session::SessionManager;
 
 use crate::metrics::Metrics;
-use crate::view::{MenuState, TerminalView};
+use crate::view::{ClosePromptState, MenuState, TerminalView};
 
 /// Tamaño de fuente base de fábrica si no hay configuración.
 const BASE_FONT_SIZE: f32 = 14.0;
@@ -46,6 +47,11 @@ fn main() {
         plugin_registry.register(ShortcutsPlugin::new());
         plugin_registry.register(MenuCustomizerPlugin::default());
         plugin_registry.register(HerdrPlugin::new());
+
+        // Guardián de cierre: pregunta si hay programas corriendo al cerrar.
+        let close_guard = CloseGuardPlugin::new();
+        let close_prompt = Rc::new(RefCell::new(ClosePromptState::default()));
+        plugin_registry.register(close_guard.clone());
 
         // Carga la configuración desde ~/.config/port/config.md o la crea con los defaults
         let _ = plugin_registry.load_or_create_default_config();
@@ -130,6 +136,7 @@ fn main() {
         let metrics_for_view = metrics.clone();
         let plugins_for_view = Rc::clone(&plugins);
         let menu_state_for_view = Rc::clone(&menu_state);
+        let close_prompt_for_view = Rc::clone(&close_prompt);
 
         let window = cx
             .open_window(
@@ -148,11 +155,43 @@ fn main() {
                             focus_handle,
                             plugins_for_view,
                             menu_state_for_view,
+                            close_prompt_for_view,
                         )
                     })
                 },
             )
             .expect("no se pudo abrir la ventana");
+
+        // Cierre protegido: si algún plugin detecta trabajo en curso, cancela el
+        // cierre y muestra su diálogo. Si no, la ventana se cierra sin preguntar.
+        let plugins_for_close = Rc::clone(&plugins);
+        let session_for_close = Rc::clone(&session_manager);
+        let prompt_for_close = Rc::clone(&close_prompt);
+        let _ = window.update(cx, move |_, window, inner_cx| {
+            let app: &App = inner_cx;
+            window.on_window_should_close(app, move |_window, _cx| {
+                // Programas en primer plano de todas las sesiones vivas.
+                let bins: Vec<String> = {
+                    let mgr = session_for_close.borrow();
+                    mgr.running_apps()
+                        .into_iter()
+                        .map(|(_, app)| app.bin)
+                        .collect()
+                };
+
+                let ask = close_guard.request_close(bins);
+                if ask {
+                    prompt_for_close.borrow_mut().programs =
+                        close_guard.pending_programs();
+                    prompt_for_close.borrow_mut().open = true;
+                } else {
+                    plugins_for_close.borrow().on_close_confirmed();
+                }
+
+                // `false` cancela el cierre; `true` deja que la ventana se cierre.
+                !ask
+            });
+        });
 
         // Latido reactivo: redibuja cuando el PTY tiene datos nuevos, cuando el
         // directorio de trabajo cambia (cd) o cuando cambia el programa en primer plano.

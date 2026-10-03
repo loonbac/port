@@ -374,6 +374,19 @@ impl SessionManager {
         &self.sessions
     }
 
+    /// Programas en primer plano de todas las sesiones, por ID de sesión.
+    pub fn running_apps(&self) -> Vec<(usize, RunningApp)> {
+        self.sessions
+            .iter()
+            .filter_map(|(&id, session)| session.foreground_app().map(|app| (id, app)))
+            .collect()
+    }
+
+    /// `true` si alguna sesión tiene un programa en primer plano.
+    pub fn has_running_app(&self) -> bool {
+        self.sessions.values().any(|s| s.foreground_app().is_some())
+    }
+
     /// Obtiene el directorio de trabajo de una sesión por su ID.
     pub fn session_cwd(&self, id: usize) -> Option<std::path::PathBuf> {
         self.sessions.get(&id).and_then(|s| s.current_working_directory())

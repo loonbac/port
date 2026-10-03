@@ -20,6 +20,7 @@ port-plugin-font-zoom = { git = "https://github.com/loonbac/port-plugins.git" }
 port-plugin-shortcuts = { git = "https://github.com/loonbac/port-plugins.git" }
 port-plugin-menu-customizer = { git = "https://github.com/loonbac/port-plugins.git" }
 port-plugin-herdr = { git = "https://github.com/loonbac/port-plugins.git" }
+port-plugin-close-guard = { git = "https://github.com/loonbac/port-plugins.git" }
 
 [patch."https://github.com/loonbac/port-plugins.git"]
 port-plugin-transparency = { path = "../port-plugins/plugins/transparency" }
@@ -28,6 +29,7 @@ port-plugin-font-zoom = { path = "../port-plugins/plugins/font-zoom" }
 port-plugin-shortcuts = { path = "../port-plugins/plugins/shortcuts" }
 port-plugin-menu-customizer = { path = "../port-plugins/plugins/menu-customizer" }
 port-plugin-herdr = { path = "../port-plugins/plugins/herdr" }
+port-plugin-close-guard = { path = "../port-plugins/plugins/close-guard" }
 
 [patch."https://github.com/loonbac/port.git"]
 port-term-core = { path = "crates/term-core" }

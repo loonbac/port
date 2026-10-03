@@ -40,6 +40,7 @@ pub struct TerminalView {
     focus_handle: FocusHandle,
     plugins: Rc<RefCell<PluginRegistry>>,
     menu_state: Rc<RefCell<MenuState>>,
+    close_prompt: Rc<RefCell<ClosePromptState>>,
 }
 
 impl TerminalView {
@@ -49,6 +50,7 @@ impl TerminalView {
         focus_handle: FocusHandle,
         plugins: Rc<RefCell<PluginRegistry>>,
         menu_state: Rc<RefCell<MenuState>>,
+        close_prompt: Rc<RefCell<ClosePromptState>>,
     ) -> Self {
         let background = session_manager.borrow().default_style().bg;
         Self {
@@ -58,6 +60,7 @@ impl TerminalView {
             focus_handle,
             plugins,
             menu_state,
+            close_prompt,
         }
     }
 }
@@ -220,8 +223,152 @@ impl Render for TerminalView {
             }
         }
 
+        // Diálogo de confirmación de cierre, con el mismo tratamiento visual:
+        // overlay flotante por encima de todo.
+        let prompt = self.close_prompt.borrow();
+        if prompt.open {
+            root = root.child(render_close_prompt(
+                &prompt.programs,
+                Rc::clone(&self.close_prompt),
+            ));
+        }
+        drop(prompt);
+
         root
     }
+}
+
+/// Estado del diálogo de confirmación de cierre.
+#[derive(Debug, Default, Clone)]
+pub struct ClosePromptState {
+    pub open: bool,
+    pub programs: Vec<String>,
+}
+
+/// Modal de confirmación de cierre: avisa de qué programas se perderán.
+fn render_close_prompt(
+    programs: &[String],
+    state: Rc<RefCell<ClosePromptState>>,
+) -> impl IntoElement {
+    let mut rows = div().flex().flex_col().gap(px(4.0));
+    for bin in programs {
+        rows = rows.child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(8.0))
+                .px(px(8.0))
+                .py(px(4.0))
+                .rounded(px(4.0))
+                .bg(rgb(0x1c1c2b))
+                .child(
+                    div()
+                        .w(px(6.0))
+                        .h(px(6.0))
+                        .rounded(px(3.0))
+                        .bg(rgb(0xf0883e)),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(rgb(0xf0f6fc))
+                        .child(bin.clone()),
+                ),
+        );
+    }
+
+    // Botón "No, seguir": solo oculta el diálogo.
+    let state_cancel = Rc::clone(&state);
+    let cancel_btn = div()
+        .flex()
+        .items_center()
+        .justify_center()
+        .px(px(14.0))
+        .py(px(6.0))
+        .rounded(px(5.0))
+        .bg(rgb(0x21262d))
+        .border_1()
+        .border_color(rgb(0x30363d))
+        .cursor_pointer()
+        .on_mouse_down(MouseButton::Left, move |_event, window, _cx| {
+            state_cancel.borrow_mut().open = false;
+            window.refresh();
+        })
+        .child(
+            div()
+                .text_size(px(12.0))
+                .font_weight(FontWeight::BOLD)
+                .text_color(rgb(0xc9d1d9))
+                .child("No, seguir"),
+        );
+
+    // Botón "Sí, cerrar": cierra de verdad la ventana.
+    let state_confirm = Rc::clone(&state);
+    let confirm_btn = div()
+        .flex()
+        .items_center()
+        .justify_center()
+        .px(px(14.0))
+        .py(px(6.0))
+        .rounded(px(5.0))
+        .bg(rgb(0xf85149))
+        .border_1()
+        .border_color(rgb(0xda3633))
+        .cursor_pointer()
+        .on_mouse_down(MouseButton::Left, move |_event, window, _cx| {
+            state_confirm.borrow_mut().open = false;
+            window.refresh();
+            window.remove_window();
+        })
+        .child(
+            div()
+                .text_size(px(12.0))
+                .font_weight(FontWeight::BOLD)
+                .text_color(rgb(0xffffff))
+                .child("Si, cerrar"),
+        );
+
+    deferred(
+        anchored()
+            .position(point(px(200.0), px(160.0)))
+            .child(
+                div()
+                    .w(px(440.0))
+                    .p(px(16.0))
+                    .rounded(px(8.0))
+                    .bg(rgb(0x0d1117))
+                    .border_1()
+                    .border_color(rgb(0xf0883e))
+                    .flex()
+                    .flex_col()
+                    .gap(px(12.0))
+                    .child(
+                        div()
+                            .text_size(px(14.0))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(rgb(0xf0883e))
+                            .child("Hay procesos en ejecucion"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(rgb(0x8b949e))
+                            .child("Si cierras la terminal estos procesos se perderan:"),
+                    )
+                    .child(rows)
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .justify_end()
+                            .gap(px(8.0))
+                            .child(cancel_btn)
+                            .child(confirm_btn),
+                    ),
+            ),
+    )
+    .priority(200)
 }
 
 /// Renderiza el modal nativo de gestión de plugins del core de PORT.

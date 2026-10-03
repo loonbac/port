@@ -354,3 +354,39 @@ fn a_finished_program_stops_being_reported_as_foreground_app() {
         );
     }
 }
+
+#[test]
+fn session_manager_reports_running_apps_across_all_sessions() {
+    let mut manager = SessionManager::new(plain_shell(), GridSize::new(60, 10)).expect("crear manager");
+
+    // Sin nada corriendo, no hay programas en ninguna sesión.
+    manager.pump();
+    assert!(
+        manager.running_apps().is_empty(),
+        "una terminal recién abierta no debe reportar programas"
+    );
+    assert!(!manager.has_running_app());
+
+    // Se lanza un job en primer plano en la primera sesión.
+    manager.write(b"sleep 20\n").expect("lanzar job");
+    std::thread::sleep(Duration::from_millis(300));
+    manager.pump();
+
+    let mut detected = false;
+    for _ in 0..20 {
+        if manager.has_running_app() {
+            detected = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(30));
+        manager.pump();
+    }
+    assert!(detected, "un job en primer plano debe detectarse");
+
+    // El reporte incluye el identificador de sesión, para poder cerrar el correcto.
+    let running = manager.running_apps();
+    assert!(
+        running.iter().any(|(id, app)| *id == 0 && app.bin == "sleep"),
+        "debe reportarse la sesión 0 ejecutando 'sleep', se obtuvo: {running:?}"
+    );
+}
