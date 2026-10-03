@@ -209,13 +209,29 @@ impl ConfigFile {
     }
 
     /// Carga el archivo en la ruta dada o lo crea con la configuración por defecto proporcionada.
+    /// Si el archivo ya existe pero faltan bloques de plugins recién registrados, añade
+    /// automáticamente sus secciones por defecto preservando el resto del archivo.
     pub fn load_or_create(
         path: &Path,
         defaults: &BTreeMap<String, PluginConfig>,
     ) -> std::io::Result<BTreeMap<String, PluginConfig>> {
         if path.exists() {
             let content = std::fs::read_to_string(path)?;
-            Ok(Self::parse(&content))
+            let mut configs = Self::parse(&content);
+            let mut missing = false;
+            let mut updated_content = content;
+            for (plugin_id, default_cfg) in defaults {
+                if !configs.contains_key(plugin_id) {
+                    updated_content =
+                        Self::update_or_append(&updated_content, plugin_id, default_cfg);
+                    configs.insert(plugin_id.clone(), default_cfg.clone());
+                    missing = true;
+                }
+            }
+            if missing {
+                std::fs::write(path, updated_content)?;
+            }
+            Ok(configs)
         } else {
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;

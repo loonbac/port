@@ -18,6 +18,7 @@ use gpui::{
 use port_plugin_api::{KeyAction, PluginRegistry};
 use port_plugin_font::FontPlugin;
 use port_plugin_font_zoom::FontZoomPlugin;
+use port_plugin_herdr::HerdrPlugin;
 use port_plugin_menu_customizer::MenuCustomizerPlugin;
 use port_plugin_shortcuts::ShortcutsPlugin;
 use port_plugin_transparency::TransparencyPlugin;
@@ -44,6 +45,7 @@ fn main() {
         plugin_registry.register(FontZoomPlugin::new(BASE_FONT_SIZE));
         plugin_registry.register(ShortcutsPlugin::new());
         plugin_registry.register(MenuCustomizerPlugin::default());
+        plugin_registry.register(HerdrPlugin::new());
 
         // Carga la configuración desde ~/.config/port/config.md o la crea con los defaults
         let _ = plugin_registry.load_or_create_default_config();

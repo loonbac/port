@@ -17,7 +17,8 @@ use std::rc::Rc;
 use gpui::prelude::*;
 use gpui::{
     anchored, deferred, App, Bounds, Context, FocusHandle, Font, FontFallbacks, FontStyle,
-    FontWeight, MouseButton, Render, TextRun, Window, canvas, div, fill, point, px, rgb, size,
+    FontWeight, MouseButton, Pixels, Render, TextRun, Window, canvas, div, fill, point, px, rgb,
+    size,
 };
 use port_plugin_api::{PluginInfo, PluginRegistry};
 use port_term_core::frame::{Frame, Rgb, Run, Style};
@@ -79,6 +80,10 @@ impl Render for TerminalView {
         let left_sidebars = plugins.left_sidebars();
         let bottom_bars = plugins.bottom_bars();
 
+        let left_inset = plugins.left_sidebar_width();
+        let top_inset = plugins.top_bar_height();
+        let bottom_inset = plugins.bottom_bar_height();
+
         let plugin_list = plugins.list_plugins();
         let menu_title = plugins.effective_menu_title().to_string();
 
@@ -93,8 +98,10 @@ impl Render for TerminalView {
             None
         };
 
+        let usable_w = (width - left_inset).max(100.0);
+        let usable_h = (height - top_inset - bottom_inset).max(100.0);
         let metrics = Metrics::new(font_size, self.metrics.padding);
-        let grid = metrics.grid_for(width, height);
+        let grid = metrics.grid_for(usable_w, usable_h);
 
         drop(plugins);
 
@@ -115,7 +122,7 @@ impl Render for TerminalView {
 
         let mut root = div()
             .flex()
-            .flex_col()
+            .flex_row()
             .size_full()
             .bg(root_bg)
             .track_focus(&self.focus_handle)
@@ -124,39 +131,47 @@ impl Render for TerminalView {
                 focus.focus(window);
             });
 
-        for bar in top_bars {
-            root = root.child(bar);
-        }
-
-        let mut center = div().flex().flex_row().flex_1();
+        // 1. Barras laterales izquierdas (full height)
         for sidebar in left_sidebars {
-            center = center.child(sidebar);
+            root = root.child(sidebar);
         }
 
-        center = center.child(
-            canvas(
-                move |_bounds, _window, _cx| (),
-                move |_bounds, (), window, cx| {
-                    paint_frame(
-                        &frame,
-                        &metrics,
-                        effective_bg,
-                        &font_family,
-                        font_size,
-                        &font_fallbacks,
-                        window,
-                        cx,
-                    );
-                },
-            )
-            .size_full(),
+        // 2. Columna principal (tabs arriba + canvas + barra inferior)
+        let mut main_col = div().flex().flex_col().flex_1().h_full().overflow_hidden();
+        for bar in top_bars {
+            main_col = main_col.child(bar);
+        }
+
+        main_col = main_col.child(
+            div()
+                .flex_1()
+                .w_full()
+                .child(
+                    canvas(
+                        move |_bounds, _window, _cx| (),
+                        move |bounds, (), window, cx| {
+                            paint_frame(
+                                bounds,
+                                &frame,
+                                &metrics,
+                                effective_bg,
+                                &font_family,
+                                font_size,
+                                &font_fallbacks,
+                                window,
+                                cx,
+                            );
+                        },
+                    )
+                    .size_full(),
+                ),
         );
 
-        root = root.child(center);
-
         for bar in bottom_bars {
-            root = root.child(bar);
+            main_col = main_col.child(bar);
         }
+
+        root = root.child(main_col);
 
         // Si el menú de plugins está abierto, se proyecta como overlay flotante
         if menu_open {
@@ -378,6 +393,7 @@ fn render_core_plugin_menu(
 /// Pinta el cuadro completo: quads de fondo, glifos geométricos y texto.
 #[allow(clippy::too_many_arguments)]
 fn paint_frame(
+    bounds: Bounds<Pixels>,
     frame: &Frame,
     metrics: &Metrics,
     default_bg: Rgb,
@@ -418,9 +434,12 @@ fn paint_frame(
     let cw_f32 = metrics.cell_width;
     let ch_f32 = metrics.cell_height;
 
+    let origin_x = bounds.origin.x + padding;
+    let origin_y = bounds.origin.y + padding;
+
     for (row_index, row) in frame.rows.iter().enumerate() {
-        let top = padding + cell_height * row_index as f32;
-        let mut left = padding;
+        let top = origin_y + cell_height * row_index as f32;
+        let mut left = origin_x;
 
         for (run_index, run) in row.runs.iter().enumerate() {
             let is_cursor = frame

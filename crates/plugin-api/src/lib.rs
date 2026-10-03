@@ -79,14 +79,29 @@ pub trait LayoutHook {
         None
     }
 
+    /// Altura en píxeles que ocupa la barra superior, para descontarla de la rejilla PTY.
+    fn top_bar_height(&self) -> f32 {
+        0.0
+    }
+
     /// Elemento que se inserta a la izquierda (ej. barra de espacios/sidebar).
     fn left_sidebar(&self) -> Option<AnyElement> {
         None
     }
 
+    /// Ancho en píxeles que ocupa la barra lateral izquierda, para descontarla de la rejilla PTY.
+    fn left_sidebar_width(&self) -> f32 {
+        0.0
+    }
+
     /// Elemento que se inserta en la parte inferior (ej. barra de estado).
     fn bottom_bar(&self) -> Option<AnyElement> {
         None
+    }
+
+    /// Altura en píxeles que ocupa la barra inferior, para descontarla de la rejilla PTY.
+    fn bottom_bar_height(&self) -> f32 {
+        0.0
     }
 }
 
@@ -392,6 +407,33 @@ impl PluginRegistry {
             }
         }
         KeyAction::Pass
+    }
+
+    /// Altura acumulada de las barras superiores activas.
+    pub fn top_bar_height(&self) -> f32 {
+        self.plugins
+            .iter()
+            .filter(|p| p.enabled)
+            .filter_map(|p| p.plugin.layout_hook().map(|h| h.top_bar_height()))
+            .fold(0.0f32, f32::max)
+    }
+
+    /// Ancho acumulado de las barras laterales izquierdas activas.
+    pub fn left_sidebar_width(&self) -> f32 {
+        self.plugins
+            .iter()
+            .filter(|p| p.enabled)
+            .filter_map(|p| p.plugin.layout_hook().map(|h| h.left_sidebar_width()))
+            .fold(0.0f32, f32::max)
+    }
+
+    /// Altura acumulada de las barras inferiores activas.
+    pub fn bottom_bar_height(&self) -> f32 {
+        self.plugins
+            .iter()
+            .filter(|p| p.enabled)
+            .filter_map(|p| p.plugin.layout_hook().map(|h| h.bottom_bar_height()))
+            .fold(0.0f32, f32::max)
     }
 
     /// Recopila los elementos para la barra superior (top_bar) de los plugins activos.
