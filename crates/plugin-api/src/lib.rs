@@ -2,11 +2,18 @@
 //!
 //! Este crate define la API pública con la que interactúan los plugins.
 //! Los plugins son componentes in-process desacoplados que extienden
-//! la apariencia, la entrada o el layout de la terminal sin tocar el núcleo.
+//! la apariencia, la entrada, el layout o la configuración de la terminal sin tocar el núcleo.
+
+pub mod config;
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 use gpui::AnyElement;
 use port_term_core::frame::Rgb;
 use port_term_core::input::Key;
+
+pub use config::{ConfigFile, PluginConfig};
 
 /// Acción resultante tras procesar una pulsación en un hook de entrada.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,7 +81,7 @@ pub trait LayoutHook {
 
 /// Interfaz base que todo plugin de PORT debe implementar.
 pub trait Plugin: 'static {
-    /// Identificador único del plugin en formato kebab-case (ej. "transparency").
+    /// Identificador único del plugin en formato kebab-case (ej. "transparency", "font-zoom").
     fn id(&self) -> &'static str;
 
     /// Nombre legible del plugin.
@@ -97,6 +104,21 @@ pub trait Plugin: 'static {
 
     /// Hook de layout, si el plugin lo implementa.
     fn layout_hook(&self) -> Option<&dyn LayoutHook> {
+        None
+    }
+
+    /// Configuración por defecto que este plugin define al crear el archivo.
+    fn default_config(&self) -> Option<PluginConfig> {
+        None
+    }
+
+    /// Carga la configuración persistida leída del archivo para este plugin.
+    fn load_config(&self, config: &PluginConfig) {
+        let _ = config;
+    }
+
+    /// Configuración actual que este plugin desea guardar en el archivo.
+    fn save_config(&self) -> Option<PluginConfig> {
         None
     }
 }
@@ -254,5 +276,64 @@ impl PluginRegistry {
             }
         }
         elements
+    }
+
+    /// Recopila las configuraciones por defecto de todos los plugins registrados.
+    pub fn default_configs(&self) -> BTreeMap<String, PluginConfig> {
+        let mut map = BTreeMap::new();
+        for plugin in &self.plugins {
+            if let Some(cfg) = plugin.default_config() {
+                map.insert(plugin.id().to_string(), cfg);
+            }
+        }
+        map
+    }
+
+    /// Aplica la configuración leída del archivo a cada plugin registrado correspondiente.
+    pub fn load_configs(&self, configs: &BTreeMap<String, PluginConfig>) {
+        for plugin in &self.plugins {
+            if let Some(cfg) = configs.get(plugin.id()) {
+                plugin.load_config(cfg);
+            }
+        }
+    }
+
+    /// Carga la configuración desde el archivo predeterminado (`~/.config/port/config.md`)
+    /// o lo crea con los valores por defecto de los plugins si no existe.
+    pub fn load_or_create_default_config(&self) -> std::io::Result<PathBuf> {
+        let path = ConfigFile::default_path();
+        self.load_or_create_config(&path)?;
+        Ok(path)
+    }
+
+    /// Carga la configuración desde una ruta concreta o la crea si no existe.
+    pub fn load_or_create_config(&self, path: &Path) -> std::io::Result<()> {
+        let defaults = self.default_configs();
+        let configs = ConfigFile::load_or_create(path, &defaults)?;
+        self.load_configs(&configs);
+        Ok(())
+    }
+
+    /// Guarda la configuración actual de un plugin específico en el archivo.
+    pub fn save_plugin_config(&self, plugin_id: &str, path: &Path) -> std::io::Result<bool> {
+        for plugin in &self.plugins {
+            if plugin.id() == plugin_id {
+                if let Some(cfg) = plugin.save_config() {
+                    ConfigFile::save_plugin(path, plugin_id, &cfg)?;
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    /// Guarda la configuración actual de todos los plugins registrados que implementan `save_config`.
+    pub fn save_all_configs(&self, path: &Path) -> std::io::Result<()> {
+        for plugin in &self.plugins {
+            if let Some(cfg) = plugin.save_config() {
+                ConfigFile::save_plugin(path, plugin.id(), &cfg)?;
+            }
+        }
+        Ok(())
     }
 }
