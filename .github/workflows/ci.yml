@@ -78,6 +78,12 @@ jobs:
         with:
           persist-credentials: false
 
+      # El workspace trae parches a rutas locales (`../port-plugins/...`) para
+      # desarrollar sin publicar. Ese repositorio hermano no existe en el runner,
+      # así que se retiran antes de resolver dependencias.
+      - name: Retirar parches locales
+        run: ./scripts/disable-local-patch.sh
+
       - name: Instalar Nix (usuario único, sin daemon)
         run: |
           set -eu
@@ -138,6 +144,12 @@ jobs:
         with:
           persist-credentials: false
 
+      # El workspace trae parches a rutas locales (`../port-plugins/...`) para
+      # desarrollar sin publicar. Ese repositorio hermano no existe en el runner,
+      # así que se retiran antes de resolver dependencias.
+      - name: Retirar parches locales
+        run: ./scripts/disable-local-patch.sh
+
       - name: Dependencias del sistema
         run: |
           sudo apt-get update
@@ -197,6 +209,12 @@ jobs:
         with:
           persist-credentials: false
 
+      # El workspace trae parches a rutas locales (`../port-plugins/...`) para
+      # desarrollar sin publicar. Ese repositorio hermano no existe en el runner,
+      # así que se retiran antes de resolver dependencias.
+      - name: Retirar parches locales
+        run: ./scripts/disable-local-patch.sh
+
       - name: Instalar Rust
         run: |
           set -eu
@@ -236,6 +254,12 @@ jobs:
         with:
           persist-credentials: false
 
+      # El workspace trae parches a rutas locales (`../port-plugins/...`) para
+      # desarrollar sin publicar. Ese repositorio hermano no existe en el runner,
+      # así que se retiran antes de resolver dependencias.
+      - name: Retirar parches locales
+        run: ./scripts/disable-local-patch.sh
+
       - name: Instalar Rust
         run: |
           set -eu
@@ -262,6 +286,12 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+
+      # El workspace trae parches a rutas locales (`../port-plugins/...`) para
+      # desarrollar sin publicar. Ese repositorio hermano no existe en el runner,
+      # así que se retiran antes de resolver dependencias.
+      - name: Retirar parches locales
+        run: ./scripts/disable-local-patch.sh
 
       - name: Instalar Rust
         run: |

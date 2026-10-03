@@ -46,6 +46,12 @@ jobs:
         with:
           persist-credentials: false
 
+      # El workspace trae parches a rutas locales (`../port-plugins/...`) para
+      # desarrollar sin publicar. Ese repositorio hermano no existe en el runner,
+      # así que se retiran antes de resolver dependencias.
+      - name: Retirar parches locales
+        run: ./scripts/disable-local-patch.sh
+
       - name: Instalar Nix
         run: |
           set -eu
