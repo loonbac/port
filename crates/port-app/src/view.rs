@@ -230,6 +230,8 @@ impl Render for TerminalView {
             root = root.child(render_close_prompt(
                 &prompt.programs,
                 Rc::clone(&self.close_prompt),
+                width,
+                height,
             ));
         }
         drop(prompt);
@@ -243,13 +245,46 @@ impl Render for TerminalView {
 pub struct ClosePromptState {
     pub open: bool,
     pub programs: Vec<String>,
+    /// Botón enfocado: 0 = "No, seguir", 1 = "Si, cerrar".
+    /// Por defecto se enfoca la opción segura, para que un Enter descuidado
+    /// no termine matando la terminal.
+    pub selected: usize,
+}
+
+/// Cierra la ventana de verdad, saltándose la confirmación.
+pub fn accept_close(state: &Rc<RefCell<ClosePromptState>>, window: &mut Window) {
+    {
+        let mut s = state.borrow_mut();
+        s.open = false;
+        s.selected = 0;
+    }
+    window.refresh();
+    window.remove_window();
+}
+
+/// Descarta la confirmación y vuelve a la terminal.
+pub fn decline_close(state: &Rc<RefCell<ClosePromptState>>, window: &mut Window) {
+    {
+        let mut s = state.borrow_mut();
+        s.open = false;
+        s.selected = 0;
+    }
+    window.refresh();
 }
 
 /// Modal de confirmación de cierre: avisa de qué programas se perderán.
 fn render_close_prompt(
     programs: &[String],
     state: Rc<RefCell<ClosePromptState>>,
+    window_w: f32,
+    window_h: f32,
 ) -> impl IntoElement {
+    // Centrado real en la ventana, no coordenadas fijas.
+    let modal_w = 440.0f32.min(window_w - 40.0).max(240.0);
+    let modal_h = 280.0f32;
+    let left = ((window_w - modal_w) * 0.5).max(0.0);
+    let top = ((window_h - modal_h) * 0.5).max(0.0);
+    let selected = state.borrow().selected;
     let mut rows = div().flex().flex_col().gap(px(4.0));
     for bin in programs {
         rows = rows.child(
@@ -287,13 +322,20 @@ fn render_close_prompt(
         .px(px(14.0))
         .py(px(6.0))
         .rounded(px(5.0))
-        .bg(rgb(0x21262d))
+        .bg(if selected == 0 {
+            rgb(0x30363d)
+        } else {
+            rgb(0x21262d)
+        })
         .border_1()
-        .border_color(rgb(0x30363d))
+        .border_color(if selected == 0 {
+            rgb(0x58a6ff)
+        } else {
+            rgb(0x30363d)
+        })
         .cursor_pointer()
         .on_mouse_down(MouseButton::Left, move |_event, window, _cx| {
-            state_cancel.borrow_mut().open = false;
-            window.refresh();
+            decline_close(&state_cancel, window);
         })
         .child(
             div()
@@ -312,14 +354,20 @@ fn render_close_prompt(
         .px(px(14.0))
         .py(px(6.0))
         .rounded(px(5.0))
-        .bg(rgb(0xf85149))
+        .bg(if selected == 1 {
+            rgb(0xff6b62)
+        } else {
+            rgb(0xf85149)
+        })
         .border_1()
-        .border_color(rgb(0xda3633))
+        .border_color(if selected == 1 {
+            rgb(0xff8a80)
+        } else {
+            rgb(0xda3633)
+        })
         .cursor_pointer()
         .on_mouse_down(MouseButton::Left, move |_event, window, _cx| {
-            state_confirm.borrow_mut().open = false;
-            window.refresh();
-            window.remove_window();
+            accept_close(&state_confirm, window);
         })
         .child(
             div()
@@ -331,12 +379,11 @@ fn render_close_prompt(
 
     deferred(
         anchored()
-            .position(point(px(200.0), px(160.0)))
+            .position(point(px(left), px(top)))
             .child(
                 div()
                     .w(px(440.0))
                     .p(px(16.0))
-                    .rounded(px(8.0))
                     .bg(rgb(0x0d1117))
                     .border_1()
                     .border_color(rgb(0xf0883e))
@@ -357,6 +404,12 @@ fn render_close_prompt(
                             .child("Si cierras la terminal estos procesos se perderan:"),
                     )
                     .child(rows)
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(rgb(0x6e7681))
+                            .child("[←/→] Elegir   [Enter] Confirmar   [Esc] Cancelar"),
+                    )
                     .child(
                         div()
                             .flex()

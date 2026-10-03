@@ -75,8 +75,34 @@ fn main() {
         let session_for_keys = Rc::clone(&session_manager);
         let plugins_for_keys = Rc::clone(&plugins);
         let menu_state_for_keys = Rc::clone(&menu_state);
+        let close_prompt_for_keys = Rc::clone(&close_prompt);
         cx.intercept_keystrokes(move |ev, window, _cx| {
             if let Some(key) = keys::to_core_key(&ev.keystroke) {
+                // El diálogo de cierre es modal: captura el teclado entero.
+                if close_prompt_for_keys.borrow().open {
+                    match key.key.as_str() {
+                        // Atajos directos de una tecla.
+                        "Escape" | "n" | "N" => view::decline_close(&close_prompt_for_keys, window),
+                        "y" | "Y" => view::accept_close(&close_prompt_for_keys, window),
+                        // Navegación entre los dos botones.
+                        "Left" | "Right" | "Up" | "Down" | "h" | "l" | "Tab" => {
+                            let mut s = close_prompt_for_keys.borrow_mut();
+                            s.selected = 1 - s.selected;
+                        }
+                        "Enter" | "Return" | " " => {
+                            let confirm = close_prompt_for_keys.borrow().selected == 1;
+                            if confirm {
+                                view::accept_close(&close_prompt_for_keys, window);
+                            } else {
+                                view::decline_close(&close_prompt_for_keys, window);
+                            }
+                        }
+                        // Cualquier otra tecla no hace nada: el diálogo no se cierra solo.
+                        _ => {}
+                    }
+                    return;
+                }
+
                 // Comprobación de atajo de apertura/cierre del menú de plugins (Ctrl+Shift+L por defecto)
                 let shortcut = plugins_for_keys.borrow().effective_menu_shortcut();
                 if matches_shortcut(&key, shortcut) {
@@ -169,7 +195,7 @@ fn main() {
         let prompt_for_close = Rc::clone(&close_prompt);
         let _ = window.update(cx, move |_, window, inner_cx| {
             let app: &App = inner_cx;
-            window.on_window_should_close(app, move |_window, _cx| {
+            window.on_window_should_close(app, move |close_window, _cx| {
                 // Programas en primer plano de todas las sesiones vivas.
                 let bins: Vec<String> = {
                     let mgr = session_for_close.borrow();
@@ -181,9 +207,15 @@ fn main() {
 
                 let ask = close_guard.request_close(bins);
                 if ask {
-                    prompt_for_close.borrow_mut().programs =
-                        close_guard.pending_programs();
-                    prompt_for_close.borrow_mut().open = true;
+                    {
+                        let mut prompt = prompt_for_close.borrow_mut();
+                        prompt.programs = close_guard.pending_programs();
+                        prompt.selected = 0; // siempre sobre la opción segura
+                        prompt.open = true;
+                    }
+                    // Sin este repintado el diálogo no aparecía hasta que
+                    // otro evento posterior la redibujara.
+                    close_window.refresh();
                 } else {
                     plugins_for_close.borrow().on_close_confirmed();
                 }
