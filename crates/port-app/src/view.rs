@@ -105,19 +105,21 @@ impl Render for TerminalView {
 
         let mut session_mgr = self.session_manager.borrow_mut();
 
-        // 1. Si algún plugin solicitó crear un nuevo espacio PTY (ej. Ctrl+Alt+T), se crea
-        if plugins.take_new_space_request() {
-            let _ = session_mgr.spawn_session();
+        // 1. Si algún plugin solicitó crear una nueva sesión (Ctrl+Shift+T o Ctrl+Alt+T)
+        if plugins.take_new_session_request() {
+            if let Ok(new_id) = session_mgr.spawn_session() {
+                plugins.on_session_created(new_id);
+            }
         }
 
-        // 2. Si algún plugin solicitó cerrar un espacio, se cierra
-        if let Some(idx) = plugins.take_close_space_request() {
-            let _ = session_mgr.close(idx);
+        // 2. Si algún plugin solicitó cerrar una sesión específica
+        if let Some(id) = plugins.take_close_session_request() {
+            let _ = session_mgr.close(id);
         }
 
-        // 3. Sincroniza la sesión activa con el espacio seleccionado en el plugin
-        let target_space = plugins.active_space_index();
-        session_mgr.select(target_space);
+        // 3. Sincroniza la sesión activa del gestor con la sesión solicitada por los plugins
+        let target_session = plugins.active_session_id();
+        session_mgr.select(target_session);
 
         session_mgr.pump();
         if session_mgr.size() != grid {

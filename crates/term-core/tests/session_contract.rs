@@ -238,4 +238,15 @@ fn session_manager_manages_multiple_isolated_spaces() {
         .join("\n");
     assert!(back0_text.contains("SESION_CERO"), "la sesión 0 debe conservar intacto su contenido previo");
     assert!(!back0_text.contains("SESION_UNO"));
+
+    // Creamos una tercera sesión (sesión 2)
+    let s2 = manager.spawn_session().expect("crear sesion 2");
+    assert_eq!(s2, 2);
+    assert_eq!(manager.len(), 3);
+
+    // Cerramos la sesión 1 (del medio) y verificamos que la sesión 2 conserva su ID estable
+    assert!(manager.close(1));
+    assert_eq!(manager.len(), 2);
+    assert!(manager.select(2));
+    assert_eq!(manager.active_id(), 2);
 }

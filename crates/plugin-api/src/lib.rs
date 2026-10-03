@@ -127,18 +127,38 @@ pub trait PluginManagerHook {
 
 /// Capacidades de gestión de espacios de trabajo y sesiones múltiples (como Herdr).
 pub trait SpaceHook {
+    /// Identificador de la sesión PTY activa que debe recibir entrada y renderizarse.
+    fn active_session(&self) -> usize {
+        self.active_space()
+    }
+
     /// Índice del espacio actualmente activo.
     fn active_space(&self) -> usize {
         0
     }
 
-    /// Comprueba si el plugin solicita crear una nueva sesión de shell/espacio en el núcleo.
+    /// Comprueba si el plugin solicita crear una nueva sesión de shell/espacio/pestaña en el núcleo.
     /// Consume la solicitud y devuelve `true` si se debe crear una nueva sesión.
+    fn take_new_session_request(&self) -> bool {
+        self.take_new_space_request()
+    }
+
+    /// Notifica al plugin el identificador de la sesión recién creada en el núcleo.
+    fn on_session_created(&self, session_id: usize) {
+        let _ = session_id;
+    }
+
+    /// Comprueba si el plugin solicita cerrar una sesión específica.
+    fn take_close_session_request(&self) -> Option<usize> {
+        self.take_close_space_request()
+    }
+
+    /// Compatibilidad previa.
     fn take_new_space_request(&self) -> bool {
         false
     }
 
-    /// Comprueba si el plugin solicita cerrar una sesión de espacio.
+    /// Compatibilidad previa.
     fn take_close_space_request(&self) -> Option<usize> {
         None
     }
@@ -460,6 +480,18 @@ impl PluginRegistry {
             .fold(0.0f32, f32::max)
     }
 
+    /// Identificador de la sesión activa que debe mostrarse y recibir teclado.
+    pub fn active_session_id(&self) -> usize {
+        for entry in &self.plugins {
+            if entry.enabled {
+                if let Some(hook) = entry.plugin.space_hook() {
+                    return hook.active_session();
+                }
+            }
+        }
+        0
+    }
+
     /// Índice del espacio activo según los plugins registrados.
     pub fn active_space_index(&self) -> usize {
         for entry in &self.plugins {
@@ -472,12 +504,12 @@ impl PluginRegistry {
         0
     }
 
-    /// Comprueba si algún plugin activo solicita crear una nueva sesión de shell/espacio.
-    pub fn take_new_space_request(&self) -> bool {
+    /// Comprueba si algún plugin activo solicita crear una nueva sesión de shell/espacio/pestaña.
+    pub fn take_new_session_request(&self) -> bool {
         for entry in &self.plugins {
             if entry.enabled {
                 if let Some(hook) = entry.plugin.space_hook() {
-                    if hook.take_new_space_request() {
+                    if hook.take_new_session_request() {
                         return true;
                     }
                 }
@@ -486,18 +518,39 @@ impl PluginRegistry {
         false
     }
 
-    /// Comprueba si algún plugin activo solicita cerrar una sesión de espacio.
-    pub fn take_close_space_request(&self) -> Option<usize> {
+    /// Notifica a los plugins el ID de la sesión recién creada.
+    pub fn on_session_created(&self, session_id: usize) {
         for entry in &self.plugins {
             if entry.enabled {
                 if let Some(hook) = entry.plugin.space_hook() {
-                    if let Some(idx) = hook.take_close_space_request() {
+                    hook.on_session_created(session_id);
+                }
+            }
+        }
+    }
+
+    /// Comprueba si algún plugin activo solicita cerrar una sesión específica.
+    pub fn take_close_session_request(&self) -> Option<usize> {
+        for entry in &self.plugins {
+            if entry.enabled {
+                if let Some(hook) = entry.plugin.space_hook() {
+                    if let Some(idx) = hook.take_close_session_request() {
                         return Some(idx);
                     }
                 }
             }
         }
         None
+    }
+
+    /// Compatibilidad previa.
+    pub fn take_new_space_request(&self) -> bool {
+        self.take_new_session_request()
+    }
+
+    /// Compatibilidad previa.
+    pub fn take_close_space_request(&self) -> Option<usize> {
+        self.take_close_session_request()
     }
 
     /// Recopila los elementos para la barra superior (top_bar) de los plugins activos.

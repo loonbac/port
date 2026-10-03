@@ -5,6 +5,7 @@
 //! único punto que conoce a las tres; ni la UI ni el PTY conocen a los demás.
 
 use std::cell::{Cell, RefCell};
+use std::collections::BTreeMap;
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 use alacritty_terminal::event::{Event as TermEvent, EventListener};
@@ -212,49 +213,57 @@ impl Session {
 
 /// Gestor de múltiples sesiones de terminal vivas (espacios de trabajo / pestañas).
 pub struct SessionManager {
-    sessions: Vec<Session>,
-    active_index: usize,
+    sessions: BTreeMap<usize, Session>,
+    active_id: usize,
+    next_id: usize,
     default_config: PtyConfig,
     size: GridSize,
 }
 
 impl SessionManager {
-    /// Inicia el gestor con una primera sesión interactiva.
+    /// Inicia el gestor con una primera sesión interactiva (ID = 0).
     pub fn new(config: PtyConfig, size: GridSize) -> std::io::Result<Self> {
         let first = Session::spawn(config.clone(), size)?;
+        let mut map = BTreeMap::new();
+        map.insert(0, first);
         Ok(Self {
-            sessions: vec![first],
-            active_index: 0,
+            sessions: map,
+            active_id: 0,
+            next_id: 1,
             default_config: config,
             size,
         })
     }
 
     /// Crea y añade una nueva sesión de terminal con su propio proceso PTY y la activa.
+    /// Devuelve el identificador único estable asignado a la nueva sesión.
     pub fn spawn_session(&mut self) -> std::io::Result<usize> {
         let session = Session::spawn(self.default_config.clone(), self.size)?;
-        self.sessions.push(session);
-        let new_idx = self.sessions.len() - 1;
-        self.active_index = new_idx;
-        Ok(new_idx)
+        let id = self.next_id;
+        self.next_id += 1;
+        self.sessions.insert(id, session);
+        self.active_id = id;
+        Ok(id)
     }
 
-    /// Selecciona la sesión activa por índice. Devuelve `true` si el índice es válido.
-    pub fn select(&mut self, index: usize) -> bool {
-        if index < self.sessions.len() {
-            self.active_index = index;
+    /// Selecciona la sesión activa por su ID. Devuelve `true` si el ID existe.
+    pub fn select(&mut self, id: usize) -> bool {
+        if self.sessions.contains_key(&id) {
+            self.active_id = id;
             true
         } else {
             false
         }
     }
 
-    /// Cierra una sesión por índice si hay más de una.
-    pub fn close(&mut self, index: usize) -> bool {
-        if self.sessions.len() > 1 && index < self.sessions.len() {
-            self.sessions.remove(index);
-            if self.active_index >= self.sessions.len() {
-                self.active_index = self.sessions.len() - 1;
+    /// Cierra una sesión por ID si hay más de una viva.
+    pub fn close(&mut self, id: usize) -> bool {
+        if self.sessions.len() > 1 && self.sessions.contains_key(&id) {
+            self.sessions.remove(&id);
+            if self.active_id == id {
+                if let Some(&first_key) = self.sessions.keys().next() {
+                    self.active_id = first_key;
+                }
             }
             true
         } else {
@@ -264,17 +273,22 @@ impl SessionManager {
 
     /// Referencia a la sesión activa.
     pub fn active_session(&self) -> &Session {
-        &self.sessions[self.active_index]
+        &self.sessions[&self.active_id]
     }
 
     /// Referencia mutable a la sesión activa.
     pub fn active_session_mut(&mut self) -> &mut Session {
-        &mut self.sessions[self.active_index]
+        self.sessions.get_mut(&self.active_id).expect("sesión activa")
     }
 
-    /// Índice de la sesión activa actual.
+    /// ID de la sesión activa actual.
+    pub fn active_id(&self) -> usize {
+        self.active_id
+    }
+
+    /// Para compatibilidad con active_index.
     pub fn active_index(&self) -> usize {
-        self.active_index
+        self.active_id
     }
 
     /// Cantidad de sesiones vivas.
@@ -287,13 +301,12 @@ impl SessionManager {
         self.sessions.is_empty()
     }
 
-    /// Bombea todas las sesiones para que ningún proceso secundario se congele.
-    /// Devuelve `true` si la sesión activa tuvo cambios visuales.
+    /// Bombea todas las sesiones vivas. Devuelve `true` si la sesión activa tuvo cambios.
     pub fn pump(&mut self) -> bool {
         let mut active_changed = false;
-        for (i, session) in self.sessions.iter_mut().enumerate() {
+        for (&id, session) in self.sessions.iter_mut() {
             let changed = session.pump();
-            if i == self.active_index && changed {
+            if id == self.active_id && changed {
                 active_changed = true;
             }
         }
@@ -303,7 +316,7 @@ impl SessionManager {
     /// Redimensiona todas las sesiones a la geometría dada.
     pub fn resize(&mut self, size: GridSize) -> std::io::Result<()> {
         self.size = size;
-        for session in &mut self.sessions {
+        for session in self.sessions.values_mut() {
             session.resize(size)?;
         }
         Ok(())
@@ -316,21 +329,21 @@ impl SessionManager {
 
     /// Cuadro de la sesión activa para renderizado.
     pub fn frame(&self) -> Frame {
-        self.sessions[self.active_index].frame()
+        self.active_session().frame()
     }
 
     /// Escribe bytes en el PTY de la sesión activa.
     pub fn write(&mut self, bytes: &[u8]) -> std::io::Result<()> {
-        self.sessions[self.active_index].write(bytes)
+        self.active_session_mut().write(bytes)
     }
 
     /// Modo de cursor de la sesión activa.
     pub fn cursor_key_mode(&self) -> KeyMode {
-        self.sessions[self.active_index].cursor_key_mode()
+        self.active_session().cursor_key_mode()
     }
 
     /// Estilo por defecto de la sesión activa.
     pub fn default_style(&self) -> Style {
-        self.sessions[self.active_index].default_style()
+        self.active_session().default_style()
     }
 }
