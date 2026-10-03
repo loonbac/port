@@ -22,7 +22,7 @@ use gpui::{
 };
 use port_plugin_api::{PluginInfo, PluginRegistry};
 use port_term_core::frame::{Frame, Rgb, Run, Style};
-use port_term_core::session::Session;
+use port_term_core::session::SessionManager;
 
 use crate::metrics::Metrics;
 
@@ -34,7 +34,7 @@ pub struct MenuState {
 }
 
 pub struct TerminalView {
-    session: Rc<RefCell<Session>>,
+    session_manager: Rc<RefCell<SessionManager>>,
     metrics: Metrics,
     background: Rgb,
     focus_handle: FocusHandle,
@@ -44,15 +44,15 @@ pub struct TerminalView {
 
 impl TerminalView {
     pub fn new(
-        session: Rc<RefCell<Session>>,
+        session_manager: Rc<RefCell<SessionManager>>,
         metrics: Metrics,
         focus_handle: FocusHandle,
         plugins: Rc<RefCell<PluginRegistry>>,
         menu_state: Rc<RefCell<MenuState>>,
     ) -> Self {
-        let background = session.borrow().default_style().bg;
+        let background = session_manager.borrow().default_style().bg;
         Self {
-            session,
+            session_manager,
             metrics,
             background,
             focus_handle,
@@ -103,21 +103,35 @@ impl Render for TerminalView {
         let metrics = Metrics::new(font_size, self.metrics.padding);
         let grid = metrics.grid_for(usable_w, usable_h);
 
-        drop(plugins);
+        let mut session_mgr = self.session_manager.borrow_mut();
 
-        {
-            let mut session = self.session.borrow_mut();
-            session.pump();
-            if session.size() != grid {
-                let _ = session.resize(grid);
-            }
+        // 1. Si algún plugin solicitó crear un nuevo espacio PTY (ej. Ctrl+Alt+T), se crea
+        if plugins.take_new_space_request() {
+            let _ = session_mgr.spawn_session();
         }
+
+        // 2. Si algún plugin solicitó cerrar un espacio, se cierra
+        if let Some(idx) = plugins.take_close_space_request() {
+            let _ = session_mgr.close(idx);
+        }
+
+        // 3. Sincroniza la sesión activa con el espacio seleccionado en el plugin
+        let target_space = plugins.active_space_index();
+        session_mgr.select(target_space);
+
+        session_mgr.pump();
+        if session_mgr.size() != grid {
+            let _ = session_mgr.resize(grid);
+        }
+
+        let frame = session_mgr.frame();
+        drop(session_mgr);
+        drop(plugins);
 
         if !self.focus_handle.is_focused(window) {
             self.focus_handle.focus(window);
         }
 
-        let frame = self.session.borrow().frame();
         let focus = self.focus_handle.clone();
 
         let mut root = div()

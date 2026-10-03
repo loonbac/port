@@ -125,6 +125,25 @@ pub trait PluginManagerHook {
     }
 }
 
+/// Capacidades de gestión de espacios de trabajo y sesiones múltiples (como Herdr).
+pub trait SpaceHook {
+    /// Índice del espacio actualmente activo.
+    fn active_space(&self) -> usize {
+        0
+    }
+
+    /// Comprueba si el plugin solicita crear una nueva sesión de shell/espacio en el núcleo.
+    /// Consume la solicitud y devuelve `true` si se debe crear una nueva sesión.
+    fn take_new_space_request(&self) -> bool {
+        false
+    }
+
+    /// Comprueba si el plugin solicita cerrar una sesión de espacio.
+    fn take_close_space_request(&self) -> Option<usize> {
+        None
+    }
+}
+
 /// Interfaz base que todo plugin de PORT debe implementar.
 pub trait Plugin: 'static {
     /// Identificador único del plugin en formato kebab-case (ej. "transparency", "font-zoom").
@@ -155,6 +174,11 @@ pub trait Plugin: 'static {
 
     /// Hook para personalizar o extender el menú de gestión de plugins del core.
     fn plugin_manager_hook(&self) -> Option<&dyn PluginManagerHook> {
+        None
+    }
+
+    /// Hook de gestión de espacios de trabajo y sesiones, si el plugin lo implementa.
+    fn space_hook(&self) -> Option<&dyn SpaceHook> {
         None
     }
 
@@ -434,6 +458,46 @@ impl PluginRegistry {
             .filter(|p| p.enabled)
             .filter_map(|p| p.plugin.layout_hook().map(|h| h.bottom_bar_height()))
             .fold(0.0f32, f32::max)
+    }
+
+    /// Índice del espacio activo según los plugins registrados.
+    pub fn active_space_index(&self) -> usize {
+        for entry in &self.plugins {
+            if entry.enabled {
+                if let Some(hook) = entry.plugin.space_hook() {
+                    return hook.active_space();
+                }
+            }
+        }
+        0
+    }
+
+    /// Comprueba si algún plugin activo solicita crear una nueva sesión de shell/espacio.
+    pub fn take_new_space_request(&self) -> bool {
+        for entry in &self.plugins {
+            if entry.enabled {
+                if let Some(hook) = entry.plugin.space_hook() {
+                    if hook.take_new_space_request() {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Comprueba si algún plugin activo solicita cerrar una sesión de espacio.
+    pub fn take_close_space_request(&self) -> Option<usize> {
+        for entry in &self.plugins {
+            if entry.enabled {
+                if let Some(hook) = entry.plugin.space_hook() {
+                    if let Some(idx) = hook.take_close_space_request() {
+                        return Some(idx);
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// Recopila los elementos para la barra superior (top_bar) de los plugins activos.

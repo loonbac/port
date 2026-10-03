@@ -24,7 +24,7 @@ use port_plugin_shortcuts::ShortcutsPlugin;
 use port_plugin_transparency::TransparencyPlugin;
 use port_term_core::input::Key;
 use port_term_core::pty::PtyConfig;
-use port_term_core::session::Session;
+use port_term_core::session::SessionManager;
 
 use crate::metrics::Metrics;
 use crate::view::{MenuState, TerminalView};
@@ -56,8 +56,8 @@ fn main() {
         let (width, height) = INITIAL_SIZE;
         let bounds = Bounds::centered(None, size(px(width), px(height)), cx);
 
-        let session = Rc::new(RefCell::new(
-            Session::spawn(PtyConfig::default(), metrics.grid_for(width, height))
+        let session_manager = Rc::new(RefCell::new(
+            SessionManager::new(PtyConfig::default(), metrics.grid_for(width, height))
                 .expect("no se pudo arrancar el shell"),
         ));
 
@@ -66,7 +66,7 @@ fn main() {
 
         // En una terminal cada tecla le pertenece al PTY, salvo que el menú de plugins
         // esté activo o un plugin decida consumirla.
-        let session_for_keys = Rc::clone(&session);
+        let session_for_keys = Rc::clone(&session_manager);
         let plugins_for_keys = Rc::clone(&plugins);
         let menu_state_for_keys = Rc::clone(&menu_state);
         cx.intercept_keystrokes(move |ev, window, _cx| {
@@ -126,7 +126,7 @@ fn main() {
         })
         .detach();
 
-        let session_for_view = Rc::clone(&session);
+        let session_for_view = Rc::clone(&session_manager);
         let metrics_for_view = metrics.clone();
         let plugins_for_view = Rc::clone(&plugins);
         let menu_state_for_view = Rc::clone(&menu_state);
@@ -156,7 +156,7 @@ fn main() {
 
         // Latido reactivo: solo redibuja la ventana cuando el PTY realmente tiene
         // datos nuevos. Si el shell está quieto, el uso de CPU cae a cero.
-        let session_for_poller = Rc::clone(&session);
+        let session_for_poller = Rc::clone(&session_manager);
         let window_for_poller = window.clone();
         cx.spawn(async move |cx| {
             loop {
