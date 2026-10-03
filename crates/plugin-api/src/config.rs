@@ -84,11 +84,13 @@ impl ConfigFile {
     /// Analiza el contenido de un archivo de texto con codeblocks.
     ///
     /// Cada bloque con formato:
-    /// ````{text}
+    ///
+    /// ````text
     /// ```<plugin-id>
     /// clave = valor
     /// ```
     /// ````
+    ///
     /// se asocia a la configuración de ese plugin. Cualquier texto fuera de los
     /// bloques se ignora de forma segura.
     pub fn parse(content: &str) -> BTreeMap<String, PluginConfig> {

@@ -26,8 +26,8 @@ use port_term_core::session::Session;
 use crate::metrics::Metrics;
 use crate::view::TerminalView;
 
-/// Tamaño de fuente inicial. El resto de la geometría sale de ahí.
-const FONT_SIZE: f32 = 14.0;
+/// Tamaño de fuente base de fábrica si no hay configuración.
+const BASE_FONT_SIZE: f32 = 14.0;
 /// Margen interior de la ventana, en píxeles lógicos.
 const PADDING: f32 = 10.0;
 /// Tamaño inicial de la ventana, en píxeles lógicos.
@@ -35,7 +35,19 @@ const INITIAL_SIZE: (f32, f32) = (960.0, 620.0);
 
 fn main() {
     Application::new().run(|cx: &mut App| {
-        let metrics = Metrics::new(FONT_SIZE, PADDING);
+        // Registro de plugins y carga de configuración central
+        let mut plugin_registry = PluginRegistry::new();
+        plugin_registry.register(TransparencyPlugin::default());
+        plugin_registry.register(FontPlugin::new("FiraCode Nerd Font Mono"));
+        plugin_registry.register(FontZoomPlugin::new(BASE_FONT_SIZE));
+        plugin_registry.register(ShortcutsPlugin::new());
+
+        // Carga la configuración desde ~/.config/port/config.md o la crea con los defaults
+        let _ = plugin_registry.load_or_create_default_config();
+
+        // El tamaño de fuente inicial se deriva de los plugins (ej. font-zoom)
+        let initial_font_size = plugin_registry.effective_font_size(BASE_FONT_SIZE);
+        let metrics = Metrics::new(initial_font_size, PADDING);
         let (width, height) = INITIAL_SIZE;
         let bounds = Bounds::centered(None, size(px(width), px(height)), cx);
 
@@ -44,11 +56,6 @@ fn main() {
                 .expect("no se pudo arrancar el shell"),
         ));
 
-        let mut plugin_registry = PluginRegistry::new();
-        plugin_registry.register(TransparencyPlugin::default());
-        plugin_registry.register(FontPlugin::new("FiraCode Nerd Font Mono"));
-        plugin_registry.register(FontZoomPlugin::new(FONT_SIZE));
-        plugin_registry.register(ShortcutsPlugin::new());
         let plugins = Rc::new(RefCell::new(plugin_registry));
 
         // En una terminal cada tecla le pertenece al PTY, salvo que un plugin
