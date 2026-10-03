@@ -24,7 +24,10 @@
 
   outputs = { self, nixpkgs }:
     let
-      systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
+      # `x86_64-darwin` no existe en nixpkgs: nixpkgs-unstable lo retiró al
+      # dejar de dar soporte a Intel macOS. La build de macOS en CI es
+      # nativa, no vía Nix, así que no se pierde cobertura.
+      systems = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ];
       forAllSystems = f:
         nixpkgs.lib.genAttrs systems (system: f (import nixpkgs {
           inherit system;

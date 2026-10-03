@@ -14,13 +14,13 @@ alacritty_terminal = "0.26"
 portable-pty = "0.9"
 port-term-core = { path = "crates/term-core" }
 port-plugin-api = { path = "crates/plugin-api" }
-port-plugin-transparency = { git = "https://github.com/loonbac/port-plugins.git" }
-port-plugin-font = { git = "https://github.com/loonbac/port-plugins.git" }
-port-plugin-font-zoom = { git = "https://github.com/loonbac/port-plugins.git" }
-port-plugin-shortcuts = { git = "https://github.com/loonbac/port-plugins.git" }
-port-plugin-menu-customizer = { git = "https://github.com/loonbac/port-plugins.git" }
-port-plugin-herdr = { git = "https://github.com/loonbac/port-plugins.git" }
-port-plugin-close-guard = { git = "https://github.com/loonbac/port-plugins.git" }
+port-plugin-transparency = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.0" }
+port-plugin-font = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.0" }
+port-plugin-font-zoom = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.0" }
+port-plugin-shortcuts = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.0" }
+port-plugin-menu-customizer = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.0" }
+port-plugin-herdr = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.0" }
+port-plugin-close-guard = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.0" }
 
 [patch."https://github.com/loonbac/port-plugins.git"]
 port-plugin-transparency = { path = "../port-plugins/plugins/transparency" }
