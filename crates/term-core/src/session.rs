@@ -15,7 +15,7 @@ use alacritty_terminal::vte::ansi::Processor;
 
 use crate::frame::{self, Frame, Style};
 use crate::input::KeyMode;
-use crate::pty::{Pty, PtyConfig};
+use crate::pty::{Pty, PtyConfig, RunningApp};
 
 /// Cuántas líneas guarda el scrollback.
 pub const DEFAULT_SCROLLBACK: usize = 10_000;
@@ -188,6 +188,11 @@ impl Session {
         }
         let folder = path.file_name()?.to_string_lossy().to_string();
         Some(folder)
+    }
+
+    /// Programa ejecutándose en primer plano en esta sesión, si lo hay.
+    pub fn foreground_app(&self) -> Option<RunningApp> {
+        self.pty.foreground_app()
     }
 
     /// El cuadro que la UI debe pintar. Si la rejilla no ha cambiado desde la
@@ -382,5 +387,15 @@ impl SessionManager {
     /// Directorio de trabajo de la sesión activa actual.
     pub fn active_cwd(&self) -> Option<std::path::PathBuf> {
         self.session_cwd(self.active_id)
+    }
+
+    /// Programa en primer plano de la sesión indicada, si lo hay.
+    pub fn session_app(&self, id: usize) -> Option<RunningApp> {
+        self.sessions.get(&id).and_then(|s| s.foreground_app())
+    }
+
+    /// Programa en primer plano de la sesión activa actual, si lo hay.
+    pub fn active_app(&self) -> Option<RunningApp> {
+        self.session_app(self.active_id)
     }
 }

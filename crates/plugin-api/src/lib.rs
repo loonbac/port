@@ -14,6 +14,7 @@ use std::time::SystemTime;
 use gpui::AnyElement;
 use port_term_core::frame::Rgb;
 use port_term_core::input::Key;
+use port_term_core::pty::RunningApp;
 
 pub use config::{ConfigFile, PluginConfig};
 
@@ -151,6 +152,11 @@ pub trait SpaceHook {
     /// Notifica al plugin el directorio de trabajo actual y nombre de carpeta de una sesión.
     fn update_session_cwd(&self, session_id: usize, cwd: &Path, folder_name: &str) {
         let _ = (session_id, cwd, folder_name);
+    }
+
+    /// Notifica al plugin qué programa se está ejecutando en primer plano en una sesión.
+    fn update_session_app(&self, session_id: usize, app: Option<&RunningApp>) {
+        let _ = (session_id, app);
     }
 
     /// Comprueba si el plugin solicita cerrar una sesión específica.
@@ -540,6 +546,17 @@ impl PluginRegistry {
             if entry.enabled {
                 if let Some(hook) = entry.plugin.space_hook() {
                     hook.update_session_cwd(session_id, cwd, folder_name);
+                }
+            }
+        }
+    }
+
+    /// Notifica a los plugins el programa en primer plano de una sesión.
+    pub fn update_session_app(&self, session_id: usize, app: Option<&RunningApp>) {
+        for entry in &self.plugins {
+            if entry.enabled {
+                if let Some(hook) = entry.plugin.space_hook() {
+                    hook.update_session_app(session_id, app);
                 }
             }
         }

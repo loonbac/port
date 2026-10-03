@@ -131,6 +131,12 @@ impl Render for TerminalView {
             }
         }
 
+        // 5. Notifica a los plugins qué programa corre en primer plano en cada sesión
+        for (&id, session) in session_mgr.sessions().iter() {
+            let app = session.foreground_app();
+            plugins.update_session_app(id, app.as_ref());
+        }
+
         session_mgr.pump();
         if session_mgr.size() != grid {
             let _ = session_mgr.resize(grid);

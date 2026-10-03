@@ -154,25 +154,29 @@ fn main() {
             )
             .expect("no se pudo abrir la ventana");
 
-        // Latido reactivo: redibuja cuando el PTY tiene datos nuevos o cuando el
-        // directorio de trabajo actual (cwd) del shell cambia (ej. al hacer cd).
+        // Latido reactivo: redibuja cuando el PTY tiene datos nuevos, cuando el
+        // directorio de trabajo cambia (cd) o cuando cambia el programa en primer plano.
         let session_for_poller = Rc::clone(&session_manager);
         let window_for_poller = window.clone();
         let mut last_cwd = None;
+        let mut last_app = None;
         cx.spawn(async move |cx| {
             loop {
                 cx.background_executor().timer(Duration::from_millis(16)).await;
-                let (changed, cwd) = {
+                let (changed, cwd, app) = {
                     let mut mgr = session_for_poller.borrow_mut();
                     let c = mgr.pump();
-                    let cwd = mgr.active_cwd();
-                    (c, cwd)
+                    (c, mgr.active_cwd(), mgr.active_app())
                 };
                 let cwd_changed = cwd != last_cwd;
                 if cwd_changed {
                     last_cwd = cwd;
                 }
-                if changed || cwd_changed {
+                let app_changed = app != last_app;
+                if app_changed {
+                    last_app = app;
+                }
+                if changed || cwd_changed || app_changed {
                     window_for_poller.update(cx, |_, window, _cx| window.refresh()).ok();
                 }
             }

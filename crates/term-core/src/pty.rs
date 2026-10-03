@@ -171,6 +171,104 @@ impl Pty {
         let pid = self.process_id()?;
         std::fs::read_link(format!("/proc/{pid}/cwd")).ok()
     }
+
+    /// Detecta el programa que se está ejecutando en primer plano.
+    ///
+    /// Recorre el árbol de hijos del shell por `/proc` y devuelve el primer
+    /// descendiente que no es otro shell. Cuando la terminal está en reposo no
+    /// hay ningún hijo que no sea el shell, así que devuelve `None`.
+    pub fn foreground_app(&self) -> Option<RunningApp> {
+        let mut pid = self.process_id()?;
+
+        // El límite evita un bucle infinito si `/proc` devolviera un ciclo.
+        for _ in 0..8 {
+            let children = read_children(pid);
+            if children.is_empty() {
+                return None;
+            }
+
+            let mut nested_shell = None;
+            for child in children {
+                let Some(app) = describe_process(child) else {
+                    continue;
+                };
+                if is_shell_binary(&app.bin) {
+                    nested_shell = Some(child);
+                } else {
+                    return Some(app);
+                }
+            }
+
+            match nested_shell {
+                Some(shell) => pid = shell,
+                None => return None,
+            }
+        }
+        None
+    }
+}
+
+/// Programa que se está ejecutando en primer plano dentro de una sesión.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunningApp {
+    /// PID del proceso.
+    pub pid: u32,
+    /// Nombre corto del binario, sin ruta ni extensión.
+    pub bin: String,
+}
+
+impl RunningApp {
+    /// Nombre del proceso tal como lo muestra el gestor de tareas del sistema.
+    pub fn title(&self) -> String {
+        self.bin.clone()
+    }
+}
+
+/// Hijos directos de un proceso, leídos de `/proc/{pid}/task/{pid}/children`.
+fn read_children(pid: u32) -> Vec<u32> {
+    std::fs::read_to_string(format!("/proc/{pid}/task/{pid}/children"))
+        .map(|raw| {
+            raw.split_whitespace()
+                .filter_map(|token| token.parse().ok())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Nombre corto de un proceso, leído de `/proc/{pid}/comm`.
+fn describe_process(pid: u32) -> Option<RunningApp> {
+    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
+    let bin = comm.trim().to_lowercase();
+    if bin.is_empty() {
+        return None;
+    }
+    Some(RunningApp { pid, bin })
+}
+
+/// Si el binario es un shell (o un multiplexor) y por tanto debe atravesarse
+/// para encontrar el programa real que corre por delante.
+fn is_shell_binary(bin: &str) -> bool {
+    matches!(
+        bin,
+        "fish"
+            | "bash"
+            | "zsh"
+            | "sh"
+            | "dash"
+            | "ksh"
+            | "tcsh"
+            | "csh"
+            | "nu"
+            | "elvish"
+            | "xonsh"
+            | "pwsh"
+            | "powershell"
+            | "screen"
+            | "tmux"
+            | "mosh"
+            | "ssh"
+            | "login"
+    )
 }
 
 fn to_pty_size(size: GridSize) -> PtySize {
