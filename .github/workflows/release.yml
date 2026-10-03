@@ -55,6 +55,8 @@ jobs:
       - name: Instalar Nix
         run: |
           set -eu
+          HOME_DIR="$HOME"
+          export HOME_DIR
           export NIX_INSTALL_DIR="$HOME/.nix"
           curl -fsSL --proto '=https' --tlsv1.2 https://nixos.org/nix/install \
             | sh -s -- --no-daemon

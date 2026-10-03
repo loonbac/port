@@ -103,13 +103,16 @@ jobs:
         run: |
           set -eu
           mkdir -p "$HOME/.config/nix"
-          cat > "$HOME/.config/nix/nix.conf" <<'CONF'
-          experimental-features = nix-command flakes
-          # Fedora, Debian y Arch no crean el grupo `nixbld`; single-user no lo
-          # necesita y evita que la build muera en el sandbox.
-          build-users-group =
-          sandbox = true
-          CONF
+          # El instalador escribe `build-users-group = nixbld`, grupo que
+          # Fedora, Debian y Arch no crean. Single-user no lo necesita, así que
+          # se sobrescribe la config después de instalar.
+          printf '%s\n' \
+            'experimental-features = nix-command flakes' \
+            'build-users-group =' \
+            'sandbox = true' \
+            'max-jobs = auto' \
+            > "$HOME_DIR/.config/nix/nix.conf"
+          cat "$HOME_DIR/.config/nix/nix.conf"
 
       - name: Cache de Nix
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4

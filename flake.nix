@@ -31,7 +31,15 @@
         }));
     in
     {
-      packages = forAllSystems (pkgs: rec {
+      packages = forAllSystems (pkgs: let
+        libs = with pkgs; [
+          libxcb
+          libxkbcommon
+          freetype
+          wayland
+          vulkan-loader
+        ];
+      in rec {
         port = pkgs.rustPlatform.buildRustPackage {
           pname = "port";
           version = "0.1.0";
@@ -39,48 +47,24 @@
           src = pkgs.lib.cleanSource ../.;
           cargoLock.lockFile = ../Cargo.lock;
 
-          nativeBuildInputs = with pkgs; [
+          nativeBuildInputs = (with pkgs; [
             pkg-config
             cmake
             nasm
             python3
             fontconfig
             harfbuzz
-
-            # Enlazadas al compilar y cargadas al ejecutar.
-            libxcb
-            libxkbcommon
-            freetype
-            wayland
-            vulkan-loader
-          ];
+          ]) ++ libs;
 
           buildAndTestSubdir = ".";
 
           # El sandbox de Nix no lee el shell.nix del repo, así que las
           # variables de enlazado se declaran aquí. Si el binario no enlaza
           # dentro del sandbox, tampoco enlazará fuera.
-          LIBRARY_PATH = pkgs.lib.makeSearchPathOutput "lib" (with pkgs; [
-            libxcb
-            libxkbcommon
-            freetype
-            wayland
-            vulkan-loader
-          ]);
+          LIBRARY_PATH = pkgs.lib.concatMapStringsSep ":" (p: "${p}/lib") libs;
           RUSTFLAGS = pkgs.lib.concatMapStringsSep " " (p:
-            "-C link-arg=-Wl,-rpath,${p}/lib") (with pkgs; [
-              libxcb
-              libxkbcommon
-              freetype
-              wayland
-              vulkan-loader
-            ]);
-          PKG_CONFIG_PATH = pkgs.lib.makeSearchPathOutput "lib/pkgconfig" (with pkgs; [
-            libxcb
-            libxkbcommon
-            freetype
-            wayland
-          ]);
+            "-C link-arg=-Wl,-rpath,${p}/lib") libs;
+          PKG_CONFIG_PATH = pkgs.lib.makeSearchPathOutput "lib/pkgconfig" libs;
 
           doCheck = true;
 
@@ -106,7 +90,15 @@
         };
       });
 
-      devShells = forAllSystems (pkgs: {
+      devShells = forAllSystems (pkgs: let
+        libs = with pkgs; [
+          libxcb
+          libxkbcommon
+          freetype
+          wayland
+          vulkan-loader
+        ];
+      in {
         default = pkgs.mkShell {
           packages = with pkgs; [
             cargo
@@ -117,12 +109,15 @@
             python3
             fontconfig
             harfbuzz
-            libxcb
-            libxkbcommon
-            freetype
-            wayland
-            vulkan-loader
-          ];
+          ] ++ libs;
+
+          # Mismas variables que usa la build, para que `cargo test` dentro
+          # del shell enlace igual que el binario publicado.
+          LIBRARY_PATH = pkgs.lib.concatMapStringsSep ":" (p: "${p}/lib") libs;
+          RUSTFLAGS = pkgs.lib.concatMapStringsSep " " (p:
+            "-C link-arg=-Wl,-rpath,${p}/lib") libs;
+          PKG_CONFIG_PATH = pkgs.lib.makeSearchPathOutput "lib/pkgconfig" libs;
+
           shellHook = ''
             echo "PORT: shell listo (fonte $(command -v cargo))"
           '';
