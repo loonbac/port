@@ -148,6 +148,11 @@ pub trait SpaceHook {
         let _ = session_id;
     }
 
+    /// Notifica al plugin el directorio de trabajo actual y nombre de carpeta de una sesión.
+    fn update_session_cwd(&self, session_id: usize, cwd: &Path, folder_name: &str) {
+        let _ = (session_id, cwd, folder_name);
+    }
+
     /// Comprueba si el plugin solicita cerrar una sesión específica.
     fn take_close_session_request(&self) -> Option<usize> {
         self.take_close_space_request()
@@ -524,6 +529,17 @@ impl PluginRegistry {
             if entry.enabled {
                 if let Some(hook) = entry.plugin.space_hook() {
                     hook.on_session_created(session_id);
+                }
+            }
+        }
+    }
+
+    /// Notifica a los plugins el directorio de trabajo actual y nombre de carpeta de una sesión.
+    pub fn update_session_cwd(&self, session_id: usize, cwd: &Path, folder_name: &str) {
+        for entry in &self.plugins {
+            if entry.enabled {
+                if let Some(hook) = entry.plugin.space_hook() {
+                    hook.update_session_cwd(session_id, cwd, folder_name);
                 }
             }
         }

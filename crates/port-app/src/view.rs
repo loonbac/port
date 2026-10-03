@@ -121,6 +121,16 @@ impl Render for TerminalView {
         let target_session = plugins.active_session_id();
         session_mgr.select(target_session);
 
+        // 4. Notifica a los plugins el directorio de trabajo actual de cada sesión viva
+        for (&id, session) in session_mgr.sessions().iter() {
+            if let Some(cwd) = session.current_working_directory() {
+                let folder = session
+                    .current_folder_name()
+                    .unwrap_or_else(|| "~".to_string());
+                plugins.update_session_cwd(id, &cwd, &folder);
+            }
+        }
+
         session_mgr.pump();
         if session_mgr.size() != grid {
             let _ = session_mgr.resize(grid);

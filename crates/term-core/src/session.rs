@@ -173,6 +173,23 @@ impl Session {
         self.dirty.set(true);
     }
 
+    /// Directorio de trabajo actual del shell en tiempo real.
+    pub fn current_working_directory(&self) -> Option<std::path::PathBuf> {
+        self.pty.current_working_directory()
+    }
+
+    /// Nombre de la carpeta de trabajo actual. Si es el directorio HOME, devuelve `~`.
+    pub fn current_folder_name(&self) -> Option<String> {
+        let path = self.current_working_directory()?;
+        if let Ok(home) = std::env::var("HOME") {
+            if path == std::path::Path::new(&home) {
+                return Some("~".to_string());
+            }
+        }
+        let folder = path.file_name()?.to_string_lossy().to_string();
+        Some(folder)
+    }
+
     /// El cuadro que la UI debe pintar. Si la rejilla no ha cambiado desde la
     /// última llamada, devuelve la versión en caché sin volver a recorrer celdas.
     pub fn frame(&self) -> Frame {
@@ -345,5 +362,25 @@ impl SessionManager {
     /// Estilo por defecto de la sesión activa.
     pub fn default_style(&self) -> Style {
         self.active_session().default_style()
+    }
+
+    /// Mapa de todas las sesiones vivas.
+    pub fn sessions(&self) -> &BTreeMap<usize, Session> {
+        &self.sessions
+    }
+
+    /// Obtiene el directorio de trabajo de una sesión por su ID.
+    pub fn session_cwd(&self, id: usize) -> Option<std::path::PathBuf> {
+        self.sessions.get(&id).and_then(|s| s.current_working_directory())
+    }
+
+    /// Obtiene el nombre de la carpeta de una sesión por su ID.
+    pub fn session_folder_name(&self, id: usize) -> Option<String> {
+        self.sessions.get(&id).and_then(|s| s.current_folder_name())
+    }
+
+    /// Directorio de trabajo de la sesión activa actual.
+    pub fn active_cwd(&self) -> Option<std::path::PathBuf> {
+        self.session_cwd(self.active_id)
     }
 }

@@ -160,6 +160,17 @@ impl Pty {
         }
         matches!(self.child.try_wait(), Ok(Some(_)))
     }
+
+    /// Devuelve el PID del proceso de shell hijo, si está disponible.
+    pub fn process_id(&self) -> Option<u32> {
+        self.child.process_id()
+    }
+
+    /// Obtiene el directorio de trabajo actual (cwd) del shell en tiempo real.
+    pub fn current_working_directory(&self) -> Option<std::path::PathBuf> {
+        let pid = self.process_id()?;
+        std::fs::read_link(format!("/proc/{pid}/cwd")).ok()
+    }
 }
 
 fn to_pty_size(size: GridSize) -> PtySize {
