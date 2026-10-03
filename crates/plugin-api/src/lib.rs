@@ -7,8 +7,9 @@
 pub mod config;
 
 use std::cell::{Cell, RefCell};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
 use std::time::SystemTime;
 
 use gpui::AnyElement;
@@ -17,6 +18,111 @@ use port_term_core::input::Key;
 use port_term_core::pty::RunningApp;
 
 pub use config::{ConfigFile, PluginConfig};
+
+/// Argumento de una llamada entre plugins.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Arg {
+    Unit,
+    Num(f32),
+    Text(String),
+}
+
+/// Resultado devuelto por un servicio.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Ret {
+    Unit,
+    Num(f32),
+    Text(String),
+    Bool(bool),
+}
+
+/// Error al invocar un servicio.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ServiceError {
+    /// Ese identificador no corresponde a ningún plugin activo.
+    UnknownService(String),
+    /// El servicio existe pero no expone esa acción.
+    UnknownAction {
+        service: String,
+        action: String,
+    },
+    /// La acción se ejecutó pero devolvió un fallo.
+    Failed(String),
+}
+
+/// Capacidad que un plugin publica para que otros puedan utilizarla.
+///
+/// Es la vía nativa para que un plugin llame a otro sin conocer su tipo
+/// concreto: se pide por identificador estable y se invoca una acción por nombre.
+pub trait Service: Send + Sync {
+    /// Identificador estable con el que se busca el servicio. Suele coincidir con
+    /// el `id()` del plugin que lo publica.
+    fn id(&self) -> &str;
+
+    /// Nombre legible, para diagnóstico y para la UI de configuración.
+    fn name(&self) -> &str;
+
+    /// Acciones que este servicio publica.
+    fn actions(&self) -> Vec<&'static str>;
+
+    /// Ejecuta una acción. `None` si la acción no existe en este servicio.
+    fn invoke(&self, action: &str, args: &[Arg]) -> Option<Result<Ret, ServiceError>>;
+}
+
+/// Directorio de servicios publicados por los plugins.
+///
+/// Vive detrás de un `Arc` compartido: el registro lo crea, cada plugin publica
+/// lo que expone y cualquier otro lo consulta por identificador, sin conocer su
+/// implementación.
+#[derive(Default)]
+pub struct Services {
+    inner: RwLock<HashMap<String, Arc<dyn Service>>>,
+}
+
+impl Services {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Publica un servicio, reemplazando cualquier versión anterior.
+    pub fn publish(&self, service: Arc<dyn Service>) {
+        let id = service.id().to_string();
+        self.inner.write().unwrap().insert(id, service);
+    }
+
+    /// `true` si algún plugin activo publica ese servicio.
+    pub fn has(&self, service_id: &str) -> bool {
+        self.inner.read().unwrap().contains_key(service_id)
+    }
+
+    /// Invoca una acción sobre un servicio publicado por otro plugin.
+    pub fn call(&self, service_id: &str, action: &str, args: &[Arg]) -> Result<Ret, ServiceError> {
+        let service = {
+            let map = self.inner.read().unwrap();
+            match map.get(service_id) {
+                Some(service) => Arc::clone(service),
+                None => return Err(ServiceError::UnknownService(service_id.to_string())),
+            }
+        };
+
+        service
+            .invoke(action, args)
+            .unwrap_or_else(|| {
+                Err(ServiceError::UnknownAction {
+                    service: service_id.to_string(),
+                    action: action.to_string(),
+                })
+            })
+    }
+
+    /// Identificadores de todos los servicios publicados.
+    pub fn published(&self) -> Vec<String> {
+        let map = self.inner.read().unwrap();
+        let mut ids: Vec<String> = map.keys().cloned().collect();
+        ids.sort();
+        ids
+    }
+}
 
 /// Información básica y estado de un plugin registrado.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -240,6 +346,12 @@ pub trait Plugin: 'static {
         None
     }
 
+    /// Capacidades que este plugin publica para que otros plugins las utilization.
+    /// El registro las publica en el directorio de servicios al registrarlo.
+    fn services(&self) -> Vec<Arc<dyn Service>> {
+        Vec::new()
+    }
+
     /// Configuración por defecto que este plugin define al crear el archivo.
     fn default_config(&self) -> Option<PluginConfig> {
         None
@@ -267,6 +379,7 @@ pub struct PluginRegistry {
     plugins: Vec<RegisteredPlugin>,
     config_path: RefCell<Option<PathBuf>>,
     last_modified: Cell<Option<SystemTime>>,
+    services: Arc<Services>,
 }
 
 impl PluginRegistry {
@@ -276,11 +389,18 @@ impl PluginRegistry {
             plugins: Vec::new(),
             config_path: RefCell::new(None),
             last_modified: Cell::new(None),
+            services: Arc::new(Services::new()),
         }
+    }
+
+    /// Directorio de servicios, para pasarlo a plugins que llaman a otros.
+    pub fn services(&self) -> Arc<Services> {
+        Arc::clone(&self.services)
     }
 
     /// Registra un nuevo plugin en la terminal, activo por defecto.
     pub fn register<P: Plugin>(&mut self, plugin: P) {
+        self.publish_services(&plugin);
         self.plugins.push(RegisteredPlugin {
             plugin: Box::new(plugin),
             enabled: true,
@@ -289,10 +409,17 @@ impl PluginRegistry {
 
     /// Registra un plugin ya empaquetado en Box, activo por defecto.
     pub fn register_boxed(&mut self, plugin: Box<dyn Plugin>) {
+        self.publish_services(plugin.as_ref());
         self.plugins.push(RegisteredPlugin {
             plugin,
             enabled: true,
         });
+    }
+
+    fn publish_services(&self, plugin: &dyn Plugin) {
+        for service in plugin.services() {
+            self.services.publish(service);
+        }
     }
 
     /// Devuelve el número total de plugins registrados.

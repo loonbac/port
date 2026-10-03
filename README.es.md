@@ -87,7 +87,7 @@ Wayland/XCB/Vulkan.
 
 ```bash
 nix-shell                      # entorno con librerías nativas enlazadas
-cargo test                     # 63 tests unitarios y de contrato
+cargo test                     # 65 tests unitarios y de contrato
 cargo build --release -p port
 ./target/release/port
 ```
@@ -120,6 +120,26 @@ impl Plugin for MiPlugin {
 
 Hooks disponibles: `AppearanceHook`, `InputHook`, `LayoutHook`, `SpaceHook`,
 `PluginManagerHook` y `LifecycleHook`.
+
+### Llamar a un plugin desde otro
+
+Un plugin puede publicar una capacidad con `Plugin::services()` y otro puede
+invocarla por identificador, sin compartir tipos ni clonar internos:
+
+```rust
+// En el plugin que publica.
+impl Plugin for MiPlugin {
+    fn services(&self) -> Vec<Arc<dyn Service>> {
+        vec![Arc::new(MiServicio)]
+    }
+}
+
+// En el plugin que consume.
+shortcuts.bind_service("ctrl+=", "mi-plugin", "haz_algo");
+```
+
+`bind_service` resuelve el destino al pulsar la tecla, así que el orden de
+registro da igual.
 
 ## Anexo: plugins
 

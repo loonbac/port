@@ -82,7 +82,7 @@ libraries.
 
 ```bash
 nix-shell                      # environment with native libraries linked
-cargo test                     # 63 unit and contract tests
+cargo test                     # 65 unit and contract tests
 cargo build --release -p port
 ./target/release/port
 ```
@@ -115,6 +115,26 @@ impl Plugin for MyPlugin {
 
 Available hooks: `AppearanceHook`, `InputHook`, `LayoutHook`, `SpaceHook`,
 `PluginManagerHook` and `LifecycleHook`.
+
+### Calling one plugin from another
+
+A plugin can publish a capability with `Plugin::services()` and another can
+invoke it by identifier, with no shared types and no cloning of plugin internals:
+
+```rust
+// In the providing plugin.
+impl Plugin for MyPlugin {
+    fn services(&self) -> Vec<Arc<dyn Service>> {
+        vec![Arc::new(MyService)]
+    }
+}
+
+// In the consuming plugin.
+shortcuts.bind_service("ctrl+=", "my-plugin", "do_thing");
+```
+
+`bind_service` resolves the target at keypress time, so registration order does
+not matter.
 
 ## Appendix: plugins
 

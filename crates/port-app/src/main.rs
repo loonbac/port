@@ -9,7 +9,6 @@ mod view;
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::prelude::*;
@@ -46,35 +45,14 @@ fn main() {
         plugin_registry.register(FontPlugin::new("FiraCode Nerd Font Mono"));
         plugin_registry.register(FontZoomPlugin::new(BASE_FONT_SIZE));
 
-        // Los atajos de zoom se registran en el plugin de atajos, no en el de
-        // fuente: asi se pueden cambiar o quitar sin tocar font-zoom.
-        let font_zoom = Arc::new(FontZoomPlugin::new(BASE_FONT_SIZE));
-        let shortcuts = ShortcutsPlugin::new();
-        {
-            let zoom = Arc::clone(&font_zoom);
-            shortcuts.bind_str("ctrl+=", move || {
-                zoom.zoom_in();
-            });
-        }
-        {
-            let zoom = Arc::clone(&font_zoom);
-            shortcuts.bind_str("ctrl+shift+=", move || {
-                zoom.zoom_in();
-            });
-        }
-        {
-            let zoom = Arc::clone(&font_zoom);
-            shortcuts.bind_str("ctrl+-", move || {
-                zoom.zoom_out();
-            });
-        }
-        {
-            let zoom = Arc::clone(&font_zoom);
-            shortcuts.bind_str("ctrl+0", move || {
-                zoom.reset_zoom();
-            });
-        }
-        plugin_registry.register((*font_zoom).clone());
+        // Los atajos de zoom se registran en el plugin de atajos, que es el
+        // unico dueno de las teclas. La llamada se resuelve por servicio, asi
+        // que main no necesita conocer la implementacion de font-zoom.
+        let shortcuts = ShortcutsPlugin::new().with_services(plugin_registry.services());
+        shortcuts.bind_service("ctrl+=", "font-zoom", "zoom_in");
+        shortcuts.bind_service("ctrl+shift+=", "font-zoom", "zoom_in");
+        shortcuts.bind_service("ctrl+-", "font-zoom", "zoom_out");
+        shortcuts.bind_service("ctrl+0", "font-zoom", "reset");
         plugin_registry.register(shortcuts);
         plugin_registry.register(MenuCustomizerPlugin::default());
         plugin_registry.register(HerdrPlugin::new());
