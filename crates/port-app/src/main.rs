@@ -86,8 +86,13 @@ fn main() {
                         "y" | "Y" => view::accept_close(&close_prompt_for_keys, window),
                         // Navegación entre los dos botones.
                         "Left" | "Right" | "Up" | "Down" | "h" | "l" | "Tab" => {
-                            let mut s = close_prompt_for_keys.borrow_mut();
-                            s.selected = 1 - s.selected;
+                            {
+                                let mut s = close_prompt_for_keys.borrow_mut();
+                                s.selected = 1 - s.selected;
+                            }
+                            // Sin este repintado el foco cambiaba de estado
+                            // pero se seguía viendo el botón anterior.
+                            window.refresh();
                         }
                         "Enter" | "Return" | " " => {
                             let confirm = close_prompt_for_keys.borrow().selected == 1;

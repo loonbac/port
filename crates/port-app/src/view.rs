@@ -313,69 +313,80 @@ fn render_close_prompt(
         );
     }
 
-    // Botón "No, seguir": solo oculta el diálogo.
-    let state_cancel = Rc::clone(&state);
-    let cancel_btn = div()
-        .flex()
-        .items_center()
-        .justify_center()
-        .px(px(14.0))
-        .py(px(6.0))
-        .rounded(px(5.0))
-        .bg(if selected == 0 {
-            rgb(0x30363d)
+    // Ambos botones comparten estilo base: la diferencia entre el enfocado y
+    // el resto es solo el foco, nunca "el que está en rojo".
+    let mk_button = |label: &'static str,
+                     focused: bool,
+                     accent: gpui::Hsla,
+                     state: Rc<RefCell<ClosePromptState>>| {
+        let bg: gpui::Hsla = if focused {
+            accent.opacity(0.22)
         } else {
-            rgb(0x21262d)
-        })
-        .border_1()
-        .border_color(if selected == 0 {
-            rgb(0x58a6ff)
+            rgb(0x161b22).into()
+        };
+        let border: gpui::Hsla = if focused { accent } else { rgb(0x30363d).into() };
+        let text: gpui::Hsla = if focused {
+            rgb(0xffffff).into()
         } else {
-            rgb(0x30363d)
-        })
-        .cursor_pointer()
-        .on_mouse_down(MouseButton::Left, move |_event, window, _cx| {
-            decline_close(&state_cancel, window);
-        })
-        .child(
+            rgb(0x8b949e).into()
+        };
+
+        let mut inner = div().flex().flex_row().items_center().gap(px(8.0));
+        // Punto de foco: aparece solo en la opción elegida.
+        inner = if focused {
+            inner.child(
+                div()
+                    .w(px(7.0))
+                    .h(px(7.0))
+                    .rounded(px(4.0))
+                    .bg(accent),
+            )
+        } else {
+            // Marcador de posición para que el texto no salte al aparecer.
+            inner.child(div().w(px(7.0)).h(px(7.0)))
+        };
+
+        inner = inner.child(
             div()
-                .text_size(px(12.0))
+                .text_size(px(13.0))
                 .font_weight(FontWeight::BOLD)
-                .text_color(rgb(0xc9d1d9))
-                .child("No, seguir"),
+                .text_color(text)
+                .child(label),
         );
 
-    // Botón "Sí, cerrar": cierra de verdad la ventana.
-    let state_confirm = Rc::clone(&state);
-    let confirm_btn = div()
-        .flex()
-        .items_center()
-        .justify_center()
-        .px(px(14.0))
-        .py(px(6.0))
-        .rounded(px(5.0))
-        .bg(if selected == 1 {
-            rgb(0xff6b62)
-        } else {
-            rgb(0xf85149)
-        })
-        .border_1()
-        .border_color(if selected == 1 {
-            rgb(0xff8a80)
-        } else {
-            rgb(0xda3633)
-        })
-        .cursor_pointer()
-        .on_mouse_down(MouseButton::Left, move |_event, window, _cx| {
-            accept_close(&state_confirm, window);
-        })
-        .child(
-            div()
-                .text_size(px(12.0))
-                .font_weight(FontWeight::BOLD)
-                .text_color(rgb(0xffffff))
-                .child("Si, cerrar"),
-        );
+        div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .px(px(18.0))
+            .py(px(8.0))
+            .rounded(px(6.0))
+            .bg(bg)
+            .border(if focused { px(2.0) } else { px(1.0) })
+            .border_color(border)
+            .cursor_pointer()
+            .on_mouse_down(MouseButton::Left, move |_event, window, _cx| {
+                if focused {
+                    accept_close(&state, window);
+                } else {
+                    decline_close(&state, window);
+                }
+            })
+            .child(inner)
+    };
+
+    let cancel_btn = mk_button(
+        "No, seguir",
+        selected == 0,
+        rgb(0x58a6ff).into(),
+        Rc::clone(&state),
+    );
+    let confirm_btn = mk_button(
+        "Si, cerrar",
+        selected == 1,
+        rgb(0xf85149).into(),
+        Rc::clone(&state),
+    );
 
     deferred(
         anchored()
@@ -414,8 +425,8 @@ fn render_close_prompt(
                         div()
                             .flex()
                             .flex_row()
-                            .justify_end()
-                            .gap(px(8.0))
+                            .justify_center()
+                            .gap(px(12.0))
                             .child(cancel_btn)
                             .child(confirm_btn),
                     ),
