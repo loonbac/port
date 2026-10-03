@@ -3862,6 +3862,7 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "port-plugin-api",
+ "port-plugin-font",
  "port-plugin-transparency",
  "port-term-core",
 ]
@@ -3872,6 +3873,13 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "port-term-core",
+]
+
+[[package]]
+name = "port-plugin-font"
+version = "0.1.0"
+dependencies = [
+ "port-plugin-api",
 ]
 
 [[package]]

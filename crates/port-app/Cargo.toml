@@ -14,3 +14,4 @@ gpui = { workspace = true }
 port-term-core = { path = "../term-core" }
 port-plugin-api = { path = "../plugin-api" }
 port-plugin-transparency = { workspace = true }
+port-plugin-font = { workspace = true }

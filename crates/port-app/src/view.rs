@@ -8,8 +8,8 @@
 //! no garantiza que una caja de texto con altura fija conserve el glifo.
 //!
 //! Los elementos de bloque y los caracteres braille se dibujan como figuras
-//! geométricas directas con `paint_quad`, evitando costosas búsquedas en
-//! fuentes de respaldo en aplicaciones como `btop`.
+//! geométricas directas y suaves con `paint_quad`, evitando costosas búsquedas
+//! en fuentes de respaldo en aplicaciones como `btop`.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -78,6 +78,10 @@ impl Render for TerminalView {
         let opacity = plugins.effective_opacity();
         let root_bg = color(effective_bg).opacity(opacity);
 
+        let font_family = plugins.effective_font_family("FiraCode Nerd Font Mono");
+        let font_size = plugins.effective_font_size(self.metrics.font_size);
+        let font_fallbacks = plugins.effective_font_fallbacks();
+
         let top_bars = plugins.top_bars();
         let left_sidebars = plugins.left_sidebars();
         let bottom_bars = plugins.bottom_bars();
@@ -106,7 +110,16 @@ impl Render for TerminalView {
             canvas(
                 move |_bounds, _window, _cx| (),
                 move |_bounds, (), window, cx| {
-                    paint_frame(&frame, &metrics, effective_bg, window, cx);
+                    paint_frame(
+                        &frame,
+                        &metrics,
+                        effective_bg,
+                        font_family,
+                        font_size,
+                        &font_fallbacks,
+                        window,
+                        cx,
+                    );
                 },
             )
             .size_full(),
@@ -123,26 +136,26 @@ impl Render for TerminalView {
 }
 
 /// Pinta el cuadro completo: quads de fondo, glifos geométricos y texto.
+#[allow(clippy::too_many_arguments)]
 fn paint_frame(
     frame: &Frame,
     metrics: &Metrics,
     default_bg: Rgb,
+    font_family: &str,
+    font_size_f32: f32,
+    font_fallbacks: &[String],
     window: &mut Window,
     cx: &mut App,
 ) {
     let padding = px(metrics.padding);
     let cell_width = px(metrics.cell_width);
     let cell_height = px(metrics.cell_height);
-    let font_size = px(metrics.font_size);
+    let font_size = px(font_size_f32);
 
-    let fallbacks = Some(FontFallbacks::from_fonts(vec![
-        "Symbols Nerd Font Mono".to_string(),
-        "DejaVu Sans Mono".to_string(),
-        "FreeMono".to_string(),
-    ]));
+    let fallbacks = Some(FontFallbacks::from_fonts(font_fallbacks.to_vec()));
 
     let regular = Font {
-        family: metrics.font_family.clone(),
+        family: font_family.to_string().into(),
         features: Default::default(),
         fallbacks: fallbacks.clone(),
         weight: FontWeight::NORMAL,
@@ -202,7 +215,7 @@ fn paint_frame(
                     let char_x: f32 = (left + cell_width * col_offset as f32).into();
                     let char_y: f32 = top.into();
 
-                    // Intentamos pintar como elemento de bloque o braille geométrico directo
+                    // Intentamos pintar como elemento de bloque o braille geométrico suave
                     if paint_block_element(ch, char_x, char_y, cw_f32, ch_f32, fg_color, window)
                         || paint_braille(ch, char_x, char_y, cw_f32, ch_f32, fg_color, window)
                     {
@@ -265,7 +278,7 @@ fn paint_frame(
     }
 }
 
-/// Dibuja caracteres braille (U+2800..=U+28FF) directamente como puntos geométricos.
+/// Dibuja caracteres braille (U+2800..=U+28FF) como puntos circulares suaves y anti-aliased.
 fn paint_braille(
     ch: char,
     x: f32,
@@ -284,13 +297,13 @@ fn paint_braille(
         return true;
     }
 
-    // Matriz de 2 columnas x 4 filas
-    let dot_w = (cell_w * 0.35).max(1.5).round();
-    let dot_h = (cell_h * 0.18).max(1.5).round();
+    // Matriz de 2 columnas x 4 filas con puntos redondos en vez de cuadrados
+    let dot_size = (cell_w * 0.32).max(2.0).round();
     let col_step = cell_w * 0.45;
     let row_step = cell_h * 0.22;
-    let offset_x = (cell_w - (col_step + dot_w)) * 0.5;
-    let offset_y = (cell_h - (row_step * 3.0 + dot_h)) * 0.5;
+    let offset_x = (cell_w - (col_step + dot_size)) * 0.5;
+    let offset_y = (cell_h - (row_step * 3.0 + dot_size)) * 0.5;
+    let radius = px(dot_size * 0.5);
 
     let dot_map: [(u8, f32, f32); 8] = [
         (0x01, 0.0, 0.0),
@@ -307,9 +320,13 @@ fn paint_braille(
         if bits & bit != 0 {
             let dot_x = x + offset_x + col * col_step;
             let dot_y = y + offset_y + row * row_step;
-            window.paint_quad(fill(
-                Bounds::new(point(px(dot_x), px(dot_y)), size(px(dot_w), px(dot_h))),
+            window.paint_quad(gpui::quad(
+                Bounds::new(point(px(dot_x), px(dot_y)), size(px(dot_size), px(dot_size))),
+                radius,
                 color,
+                gpui::Edges::default(),
+                gpui::transparent_black(),
+                gpui::BorderStyle::default(),
             ));
         }
     }
@@ -346,8 +363,22 @@ fn paint_block_element(
         0x2594 => (0.0, 0.0, 1.0, 0.125),
         // ▕ octavo derecho
         0x2595 => (0.875, 0.0, 0.125, 1.0),
-        // ■ cuadrado negro
-        0x25A0 => (0.15, 0.15, 0.7, 0.7),
+        // ■ cuadrado negro con bordes sutilmente redondeados
+        0x25A0 => {
+            let sq_w = (w * 0.65).round();
+            let sq_h = (h * 0.55).round();
+            let sq_x = x + (w - sq_w) * 0.5;
+            let sq_y = y + (h - sq_h) * 0.5;
+            window.paint_quad(gpui::quad(
+                Bounds::new(point(px(sq_x), px(sq_y)), size(px(sq_w), px(sq_h))),
+                px(2.0),
+                color,
+                gpui::Edges::default(),
+                gpui::transparent_black(),
+                gpui::BorderStyle::default(),
+            ));
+            return true;
+        }
         // ░ sombra suave
         0x2591 => {
             window.paint_quad(fill(

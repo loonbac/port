@@ -27,6 +27,39 @@ impl Plugin for MockTransparencyPlugin {
     }
 }
 
+struct MockFontPlugin {
+    family: &'static str,
+    size: f32,
+}
+
+impl AppearanceHook for MockFontPlugin {
+    fn font_family(&self) -> Option<&'static str> {
+        Some(self.family)
+    }
+
+    fn font_size(&self) -> Option<f32> {
+        Some(self.size)
+    }
+
+    fn font_fallbacks(&self) -> Option<Vec<String>> {
+        Some(vec!["Custom Fallback".to_string()])
+    }
+}
+
+impl Plugin for MockFontPlugin {
+    fn id(&self) -> &'static str {
+        "font"
+    }
+
+    fn name(&self) -> &'static str {
+        "Mock Font"
+    }
+
+    fn appearance_hook(&self) -> Option<&dyn AppearanceHook> {
+        Some(self)
+    }
+}
+
 struct MockTintPlugin;
 
 impl AppearanceHook for MockTintPlugin {
@@ -111,6 +144,9 @@ fn empty_registry_has_default_values() {
         registry.effective_background(Rgb::new(10, 10, 10)),
         Rgb::new(10, 10, 10)
     );
+    assert_eq!(registry.effective_font_family("Fira Code"), "Fira Code");
+    assert_eq!(registry.effective_font_size(14.0), 14.0);
+    assert_eq!(registry.effective_font_fallbacks().len(), 3);
     assert_eq!(registry.dispatch_key(&Key::new("a")), KeyAction::Pass);
     assert_eq!(registry.top_bars().len(), 0);
     assert_eq!(registry.left_sidebars().len(), 0);
@@ -127,6 +163,25 @@ fn appearance_hook_calculates_effective_opacity_and_tint() {
     assert_eq!(
         registry.effective_background(Rgb::new(0, 0, 0)),
         Rgb::new(20, 30, 40)
+    );
+}
+
+#[test]
+fn appearance_hook_configures_custom_font() {
+    let mut registry = PluginRegistry::new();
+    registry.register(MockFontPlugin {
+        family: "JetBrainsMono Nerd Font Mono",
+        size: 15.0,
+    });
+
+    assert_eq!(
+        registry.effective_font_family("Fira Code"),
+        "JetBrainsMono Nerd Font Mono"
+    );
+    assert_eq!(registry.effective_font_size(14.0), 15.0);
+    assert_eq!(
+        registry.effective_font_fallbacks(),
+        vec!["Custom Fallback".to_string()]
     );
 }
 

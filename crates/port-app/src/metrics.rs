@@ -19,6 +19,7 @@ const LINE_HEIGHT: f32 = 1.35;
 
 #[derive(Clone, Debug)]
 pub struct Metrics {
+    #[allow(dead_code)]
     pub font_family: SharedString,
     pub font_size: f32,
     /// Ancho de una celda en píxeles lógicos.

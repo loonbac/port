@@ -17,7 +17,7 @@ pub enum KeyAction {
     Consume,
 }
 
-/// Capacidades de personalización visual (fondo, opacidad, paleta).
+/// Capacidades de personalización visual (fondo, opacidad, paleta, fuentes).
 pub trait AppearanceHook {
     /// Opacidad deseada para el fondo de la ventana (0.0 translúcido ..= 1.0 opaco).
     fn opacity(&self) -> Option<f32> {
@@ -27,6 +27,21 @@ pub trait AppearanceHook {
     /// Tinte o modificación sobre el color de fondo base de la terminal.
     fn background_tint(&self, base: Rgb) -> Rgb {
         base
+    }
+
+    /// Nombre de la familia de fuente preferida (ej. "JetBrainsMono Nerd Font Mono").
+    fn font_family(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// Tamaño de fuente en puntos o píxeles lógicos.
+    fn font_size(&self) -> Option<f32> {
+        None
+    }
+
+    /// Lista ordenada de fuentes de respaldo para símbolos y caracteres especiales.
+    fn font_fallbacks(&self) -> Option<Vec<String>> {
+        None
     }
 }
 
@@ -143,6 +158,50 @@ impl PluginRegistry {
             }
         }
         base
+    }
+
+    /// Obtiene la familia de fuente configurada por los plugins, o el valor por defecto.
+    pub fn effective_font_family(&self, default: &'static str) -> &'static str {
+        for plugin in &self.plugins {
+            if let Some(hook) = plugin.appearance_hook() {
+                if let Some(family) = hook.font_family() {
+                    return family;
+                }
+            }
+        }
+        default
+    }
+
+    /// Obtiene el tamaño de fuente configurado por los plugins, o el valor por defecto.
+    pub fn effective_font_size(&self, default: f32) -> f32 {
+        for plugin in &self.plugins {
+            if let Some(hook) = plugin.appearance_hook() {
+                if let Some(size) = hook.font_size() {
+                    return size;
+                }
+            }
+        }
+        default
+    }
+
+    /// Fuentes de respaldo acumuladas de los plugins, o un conjunto predeterminado de símbolos.
+    pub fn effective_font_fallbacks(&self) -> Vec<String> {
+        let mut fallbacks = Vec::new();
+        for plugin in &self.plugins {
+            if let Some(hook) = plugin.appearance_hook() {
+                if let Some(fbs) = hook.font_fallbacks() {
+                    fallbacks.extend(fbs);
+                }
+            }
+        }
+        if fallbacks.is_empty() {
+            fallbacks = vec![
+                "Symbols Nerd Font Mono".to_string(),
+                "DejaVu Sans Mono".to_string(),
+                "FreeMono".to_string(),
+            ];
+        }
+        fallbacks
     }
 
     /// Despacha una tecla a través de los hooks de entrada registrados.

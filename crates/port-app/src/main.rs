@@ -16,6 +16,7 @@ use gpui::{
     App, Application, Bounds, WindowBackgroundAppearance, WindowBounds, WindowOptions, px, size,
 };
 use port_plugin_api::{KeyAction, PluginRegistry};
+use port_plugin_font::FontPlugin;
 use port_plugin_transparency::TransparencyPlugin;
 use port_term_core::pty::PtyConfig;
 use port_term_core::session::Session;
@@ -43,6 +44,7 @@ fn main() {
 
         let mut plugin_registry = PluginRegistry::new();
         plugin_registry.register(TransparencyPlugin::default());
+        plugin_registry.register(FontPlugin::new("FiraCode Nerd Font Mono"));
         let plugins = Rc::new(RefCell::new(plugin_registry));
 
         // En una terminal cada tecla le pertenece al PTY, salvo que un plugin

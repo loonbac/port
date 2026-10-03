@@ -15,9 +15,11 @@ portable-pty = "0.9"
 port-term-core = { path = "crates/term-core" }
 port-plugin-api = { path = "crates/plugin-api" }
 port-plugin-transparency = { git = "https://github.com/loonbac/port-plugins.git" }
+port-plugin-font = { git = "https://github.com/loonbac/port-plugins.git" }
 
 [patch."https://github.com/loonbac/port-plugins.git"]
 port-plugin-transparency = { path = "../port-plugins/plugins/transparency" }
+port-plugin-font = { path = "../port-plugins/plugins/font" }
 
 [patch."https://github.com/loonbac/port.git"]
 port-term-core = { path = "crates/term-core" }
