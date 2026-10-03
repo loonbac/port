@@ -12,25 +12,25 @@ license = "MIT"
 gpui = "=0.2.2"
 alacritty_terminal = "0.26"
 portable-pty = "0.9"
+# `xattr 0.2.3` usa `libc::ENOATTR`, que se eliminó en libc 0.2.190. Fijado
+# aquí para que un `cargo update` no rompa la build sin avisar.
+libc = "=0.2.189"
+# En el workspace de `port` el API y el core son SIEMPRE locales: son parte de
+# este repo. Si los plugins trajeran su propia copia, main.rs implementaría el
+# trait contra un crate y los plugins contra otro, y no coincidirían.
 port-term-core = { path = "crates/term-core" }
 port-plugin-api = { path = "crates/plugin-api" }
-port-plugin-transparency = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.0" }
-port-plugin-font = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.0" }
-port-plugin-font-zoom = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.0" }
-port-plugin-shortcuts = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.0" }
-port-plugin-menu-customizer = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.0" }
-port-plugin-herdr = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.0" }
-port-plugin-close-guard = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.0" }
+port-plugin-transparency = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.2" }
+port-plugin-font = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.2" }
+port-plugin-font-zoom = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.2" }
+port-plugin-shortcuts = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.2" }
+port-plugin-menu-customizer = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.2" }
+port-plugin-herdr = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.2" }
+port-plugin-close-guard = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.2" }
 
-[patch."https://github.com/loonbac/port-plugins.git"]
-port-plugin-transparency = { path = "../port-plugins/plugins/transparency" }
-port-plugin-font = { path = "../port-plugins/plugins/font" }
-port-plugin-font-zoom = { path = "../port-plugins/plugins/font-zoom" }
-port-plugin-shortcuts = { path = "../port-plugins/plugins/shortcuts" }
-port-plugin-menu-customizer = { path = "../port-plugins/plugins/menu-customizer" }
-port-plugin-herdr = { path = "../port-plugins/plugins/herdr" }
-port-plugin-close-guard = { path = "../port-plugins/plugins/close-guard" }
-
+# Los plugins llegan como dependencias git, pero deben usar el API y el core de
+# ESTE repo: son el mismo código, no dos copias. Sin esto, `Plugin` se resuelve
+# a dos crates distintos y el registro no compila.
 [patch."https://github.com/loonbac/port.git"]
 port-term-core = { path = "crates/term-core" }
 port-plugin-api = { path = "crates/plugin-api" }
