@@ -23,9 +23,13 @@ port-plugin-transparency = { path = "../port-plugins/plugins/transparency" }
 port-term-core = { path = "crates/term-core" }
 port-plugin-api = { path = "crates/plugin-api" }
 
+[profile.dev]
+opt-level = 1
+
 [profile.release]
 opt-level = 3
 lto = "thin"
 codegen-units = 1
 panic = "abort"
 strip = true
+
