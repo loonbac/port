@@ -189,14 +189,14 @@ fn render_core_plugin_menu(
     let left = ((window_width - modal_w) * 0.5).max(10.0);
     let top = (window_height * 0.12).max(20.0);
 
-    let mut list = div().flex().flex_col().gap_1();
+    let mut list = div().flex().flex_col().gap(px(6.0));
 
     for (i, p) in plugins.iter().enumerate() {
         let is_selected = i == selected_index;
-        let (status_text, status_color) = if p.enabled {
-            ("[✔ ACTIVO]", rgb(0x3fb950))
+        let (status_text, dot_color, badge_bg, badge_border) = if p.enabled {
+            ("ACTIVE", rgb(0x3fb950), rgb(0x0e2717), rgb(0x238636))
         } else {
-            ("[✖ INACTIVO]", rgb(0xf85149))
+            ("OFF", rgb(0x8b949e), rgb(0x161b22), rgb(0x30363d))
         };
 
         let row_bg = if is_selected {
@@ -216,8 +216,9 @@ fn render_core_plugin_menu(
             .flex_row()
             .items_center()
             .justify_between()
-            .p_2()
-            .rounded_md()
+            .px(px(10.0))
+            .py(px(8.0))
+            .rounded(px(6.0))
             .bg(row_bg)
             .border_1()
             .border_color(row_border)
@@ -226,13 +227,34 @@ fn render_core_plugin_menu(
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap_2()
+                    .gap(px(10.0))
                     .child(
+                        // Indicador de estado estilo chip profesional con punto vectorial
                         div()
-                            .text_size(px(12.0))
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(status_color)
-                            .child(status_text),
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(6.0))
+                            .px(px(8.0))
+                            .py(px(2.0))
+                            .rounded(px(4.0))
+                            .bg(badge_bg)
+                            .border_1()
+                            .border_color(badge_border)
+                            .child(
+                                div()
+                                    .w(px(6.0))
+                                    .h(px(6.0))
+                                    .rounded(px(3.0))
+                                    .bg(dot_color),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(dot_color)
+                                    .child(status_text),
+                            ),
                     )
                     .child(
                         div()
@@ -243,15 +265,19 @@ fn render_core_plugin_menu(
                     )
                     .child(
                         div()
-                            .text_size(px(12.0))
+                            .text_size(px(11.0))
                             .text_color(rgb(0x8b949e))
                             .child(format!("({})", p.id)),
                     ),
             )
             .child(
                 div()
-                    .text_size(px(12.0))
-                    .text_color(rgb(0x6e7681))
+                    .px(px(6.0))
+                    .py(px(2.0))
+                    .rounded(px(4.0))
+                    .bg(rgb(0x21262d))
+                    .text_size(px(11.0))
+                    .text_color(rgb(0x8b949e))
                     .child(format!("v{}", p.version)),
             );
 
@@ -260,14 +286,14 @@ fn render_core_plugin_menu(
 
     let modal = div()
         .w(px(modal_w))
-        .p_4()
-        .rounded_lg()
+        .p(px(16.0))
+        .rounded(px(8.0))
         .bg(rgb(0x0d1117))
         .border_1()
         .border_color(rgb(0x30363d))
         .flex()
         .flex_col()
-        .gap_3()
+        .gap(px(12.0))
         .child(
             div()
                 .flex()
@@ -276,23 +302,68 @@ fn render_core_plugin_menu(
                 .justify_between()
                 .child(
                     div()
-                        .text_size(px(15.0))
-                        .font_weight(FontWeight::BOLD)
-                        .text_color(rgb(0x58a6ff))
-                        .child(format!("🔌 {}", title)),
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(8.0))
+                        .child(
+                            div()
+                                .px(px(6.0))
+                                .py(px(2.0))
+                                .rounded(px(4.0))
+                                .bg(rgb(0x1f293d))
+                                .border_1()
+                                .border_color(rgb(0x388bfd))
+                                .text_size(px(10.0))
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(rgb(0x58a6ff))
+                                .child("PLUGINS"),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(14.0))
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(rgb(0xf0f6fc))
+                                .child(title.to_string()),
+                        ),
                 )
                 .child(
                     div()
-                        .text_size(px(12.0))
+                        .px(px(6.0))
+                        .py(px(2.0))
+                        .rounded(px(4.0))
+                        .bg(rgb(0x161b22))
+                        .border_1()
+                        .border_color(rgb(0x30363d))
+                        .text_size(px(11.0))
                         .text_color(rgb(0x8b949e))
                         .child("PORT Core"),
                 ),
         )
         .child(
             div()
-                .text_size(px(12.0))
-                .text_color(rgb(0x8b949e))
-                .child("[↑/↓] Navegar   [Espacio/Enter] Alternar   [Esc] Cerrar"),
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(12.0))
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(rgb(0x8b949e))
+                        .child("↑↓ Navegar"),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(rgb(0x8b949e))
+                        .child("Espacio / Enter Alternar"),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(rgb(0x8b949e))
+                        .child("Esc Cerrar"),
+                ),
         )
         .child(list);
 
