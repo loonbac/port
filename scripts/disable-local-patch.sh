@@ -1,24 +1,50 @@
 #!/usr/bin/env bash
-# Elimina el bloque [patch] local de port-plugins.
+# Prepara el workspace para una build fuera del entorno de desarrollo local.
 #
-# El workspace usa parches a rutas locales (`../port-plugins/...`) para
-# desarrollar sin publicar. En CI y en releases ese repositorio hermano no está
-# presente, así que el parche debe retirarse antes de resolver dependencias.
+# Dos cosas hace:
+#
+#  1. `Cargo.toml` trae un bloque `[patch]` que apunta a rutas locales
+#     (`../port-plugins/...` y `./crates/...`). Ese repositorio hermano no está
+#     en el runner ni en un `nix build` de un paquete publicado, así que el
+#     parche se retira y las dependencias se resuelven desde GitHub.
+#
+#  2. `Cargo.lock` tiene entradas `path+file://` para esos mismos paquetes. Con
+#     el parche retirado, cargo no puede resolverlas y `--locked` falla, así que
+#     el lock se regenera contra las versiones publicadas.
+#
+# El cambio es local al runner: nunca se commitea.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
 python3 - <<'PY'
-import pathlib, re
+import pathlib
+import re
+
+# 1. Retira los bloques [patch] locales de Cargo.toml.
 p = pathlib.Path("Cargo.toml")
 s = p.read_text()
-# Borra el bloque [patch."https://github.com/loonbac/port-plugins.git"] y
-# todas sus líneas hasta la siguiente sección de nivel superior.
-s = re.sub(
-    r'\n\[patch\."https://github\.com/loonbac/port-plugins\.git"\]\n(?:(?!\[).*\n)*',
-    '\n',
-    s,
-)
+for url in ("port-plugins.git", "port.git"):
+    s = re.sub(
+        r'\n# [^\n]*\n(?:# [^\n]*\n)*\[patch\."https://github\.com/loonbac/'
+        + re.escape(url)
+        + r'"\]\n(?:(?!\[).*\n)*',
+        "\n",
+        s,
+    )
+    s = re.sub(
+        r'\n\[patch\."https://github\.com/loonbac/'
+        + re.escape(url)
+        + r'"\]\n(?:(?!\[).*\n)*',
+        "\n",
+        s,
+    )
 p.write_text(s)
-print("patch local retirado")
+
+# 2. Regenera el lock: las entradas locales dejan de ser resolubles.
+lock = pathlib.Path("Cargo.lock")
+if lock.exists():
+    lock.unlink()
 PY
+
+echo "listo: parches locales retirados, lock regenerado"

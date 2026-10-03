@@ -60,6 +60,11 @@ jobs:
             | sh -s -- --no-daemon
           echo "$HOME/.nix-profile/bin" >> "$GITHUB_PATH"
 
+      - name: Habilitar funciones experimentales de Nix
+        run: |
+          mkdir -p "$HOME/.config/nix"
+          echo "experimental-features = nix-command flakes" >> "$HOME/.config/nix/nix.conf"
+
       - name: Cache de Nix
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
