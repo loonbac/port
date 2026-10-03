@@ -15,3 +15,5 @@ port-term-core = { path = "../term-core" }
 port-plugin-api = { path = "../plugin-api" }
 port-plugin-transparency = { workspace = true }
 port-plugin-font = { workspace = true }
+port-plugin-font-zoom = { workspace = true }
+port-plugin-shortcuts = { workspace = true }

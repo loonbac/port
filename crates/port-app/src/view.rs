@@ -55,7 +55,24 @@ impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let viewport = window.viewport_size();
         let (width, height): (f32, f32) = (viewport.width.into(), viewport.height.into());
-        let grid = self.metrics.grid_for(width, height);
+
+        let plugins = self.plugins.borrow();
+        let effective_bg = plugins.effective_background(self.background);
+        let opacity = plugins.effective_opacity();
+        let root_bg = color(effective_bg).opacity(opacity);
+
+        let font_family = plugins.effective_font_family("FiraCode Nerd Font Mono");
+        let font_size = plugins.effective_font_size(self.metrics.font_size);
+        let font_fallbacks = plugins.effective_font_fallbacks();
+
+        let top_bars = plugins.top_bars();
+        let left_sidebars = plugins.left_sidebars();
+        let bottom_bars = plugins.bottom_bars();
+
+        let metrics = Metrics::new(font_size, self.metrics.padding);
+        let grid = metrics.grid_for(width, height);
+
+        drop(plugins);
 
         {
             let mut session = self.session.borrow_mut();
@@ -70,21 +87,7 @@ impl Render for TerminalView {
         }
 
         let frame = self.session.borrow().frame();
-        let metrics = self.metrics.clone();
         let focus = self.focus_handle.clone();
-
-        let plugins = self.plugins.borrow();
-        let effective_bg = plugins.effective_background(self.background);
-        let opacity = plugins.effective_opacity();
-        let root_bg = color(effective_bg).opacity(opacity);
-
-        let font_family = plugins.effective_font_family("FiraCode Nerd Font Mono");
-        let font_size = plugins.effective_font_size(self.metrics.font_size);
-        let font_fallbacks = plugins.effective_font_fallbacks();
-
-        let top_bars = plugins.top_bars();
-        let left_sidebars = plugins.left_sidebars();
-        let bottom_bars = plugins.bottom_bars();
 
         let mut root = div()
             .flex()
