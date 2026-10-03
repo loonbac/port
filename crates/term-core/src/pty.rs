@@ -114,7 +114,20 @@ impl Pty {
 
     /// Bytes ya disponibles. **Nunca bloquea**: si no hay nada, devuelve vacío.
     pub fn try_read(&mut self) -> Vec<u8> {
-        let mut bytes = Vec::new();
+        let first = match self.incoming.try_recv() {
+            Ok(chunk) => chunk,
+            Err(TryRecvError::Empty | TryRecvError::Disconnected) => return Vec::new(),
+        };
+
+        // Si solo hay un fragmento (el caso habitual), lo devolvemos directo
+        // sin asignar un segundo vector ni copiar bytes.
+        let second = match self.incoming.try_recv() {
+            Ok(chunk) => chunk,
+            Err(TryRecvError::Empty | TryRecvError::Disconnected) => return first,
+        };
+
+        let mut bytes = first;
+        bytes.extend_from_slice(&second);
         loop {
             match self.incoming.try_recv() {
                 Ok(chunk) => bytes.extend_from_slice(&chunk),

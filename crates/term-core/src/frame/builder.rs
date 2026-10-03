@@ -173,6 +173,7 @@ pub fn build<T: EventListener>(term: &Term<T>) -> Frame {
             }
             current_row = Some(row_index);
             last_column = 0;
+            sealed_run = false;
         }
 
         // El segundo hueco de un carácter ancho no se pinta: ya lo ocupa el
@@ -185,12 +186,20 @@ pub fn build<T: EventListener>(term: &Term<T>) -> Frame {
             continue;
         }
 
-        let style = style_of(term, cell.fg, cell.bg, cell.flags);
+        let mut style = style_of(term, cell.fg, cell.bg, cell.flags);
         let cell_columns = if cell.flags.contains(Flags::WIDE_CHAR) {
             2
         } else {
             1
         };
+
+        // Si la celda es un espacio sin fondo propio, ni subrayado ni invertido,
+        // su color de texto no produce ningún glifo visible: normalizarlo al
+        // estilo plano evita fragmentar filas en cientos de runs de un solo espacio
+        // con colores residuales dejados por btop u otros programas TUI.
+        if cell.c == ' ' && style.bg == Rgb::DEFAULT_BG && !style.underline && !style.reverse {
+            style.fg = Rgb::DEFAULT_FG;
+        }
 
         // La celda del cursor se entrega aislada: así la UI solo tiene que
         // invertir ese run para pintar el bloque, sin saber nada de la rejilla.
@@ -198,25 +207,44 @@ pub fn build<T: EventListener>(term: &Term<T>) -> Frame {
 
         if indexed.point.column.0 > last_column {
             let gap = indexed.point.column.0 - last_column;
-            push_run(&mut current, " ".repeat(gap), Style::plain(), gap, false);
+            append_spaces(&mut current, gap, sealed_run);
+            sealed_run = false;
         }
 
-        let mut text = String::with_capacity(4);
-        text.push(cell.c);
-        if let Some(zerowidth) = cell.zerowidth() {
-            text.extend(zerowidth.iter());
-        }
-        if on_cursor {
-            push_run(&mut current, text, style, cell_columns, true);
-            cursor_run = Some(CursorRun {
-                row: row_index.max(0) as usize,
-                run_index: current.len() - 1,
-            });
-            // Lo que venga después no puede pegarse a la celda del cursor.
-            sealed_run = true;
+        // Si el estilo coincide y no es la celda del cursor, añadimos el carácter
+        // directamente al buffer del último run sin ninguna asignación en el heap.
+        if !sealed_run && !on_cursor && current.last().is_some_and(|last| last.style == style) {
+            let last = current.last_mut().unwrap();
+            last.text.push(cell.c);
+            if let Some(zerowidth) = cell.zerowidth() {
+                last.text.extend(zerowidth.iter());
+            }
+            last.columns += cell_columns;
         } else {
-            push_run(&mut current, text, style, cell_columns, sealed_run);
-            sealed_run = false;
+            let mut text = String::with_capacity(32);
+            text.push(cell.c);
+            if let Some(zerowidth) = cell.zerowidth() {
+                text.extend(zerowidth.iter());
+            }
+            if on_cursor {
+                current.push(Run {
+                    text,
+                    style,
+                    columns: cell_columns,
+                });
+                cursor_run = Some(CursorRun {
+                    row: row_index.max(0) as usize,
+                    run_index: current.len() - 1,
+                });
+                sealed_run = true;
+            } else {
+                current.push(Run {
+                    text,
+                    style,
+                    columns: cell_columns,
+                });
+                sealed_run = false;
+            }
         }
         last_column = indexed.point.column.0 + cell_columns;
     }
@@ -267,6 +295,30 @@ pub fn build<T: EventListener>(term: &Term<T>) -> Frame {
     }
 }
 
+/// Añade espacios a la fila, fusionando con el run anterior si ya era de estilo plano.
+fn append_spaces(runs: &mut Vec<Run>, count: usize, force_new: bool) {
+    if count == 0 {
+        return;
+    }
+    let plain = Style::plain();
+    if !force_new {
+        if let Some(last) = runs.last_mut() {
+            if last.style == plain {
+                last.text.extend(std::iter::repeat(' ').take(count));
+                last.columns += count;
+                return;
+            }
+        }
+    }
+    let mut text = String::with_capacity(count.max(16));
+    text.extend(std::iter::repeat(' ').take(count));
+    runs.push(Run {
+        text,
+        style: plain,
+        columns: count,
+    });
+}
+
 /// Quita del final de una fila las celdas vacías que no cambian nada al pintar.
 fn trim_trailing_blanks(row: &mut Row, protected: Option<usize>) {
     let plain = Style::plain();
@@ -277,42 +329,21 @@ fn trim_trailing_blanks(row: &mut Row, protected: Option<usize>) {
             break;
         }
         let last = &mut row.runs[index];
-        if last.style != plain {
-            break;
-        }
-        let trimmed_len = last.text.trim_end_matches(' ').len();
-        if trimmed_len == last.text.len() {
-            break;
-        }
-        let removed = last.text.len() - trimmed_len;
-        last.text.truncate(trimmed_len);
-        last.columns = last.columns.saturating_sub(removed);
-        if last.text.is_empty() {
-            row.runs.pop();
-        }
-    }
-}
-
-/// Añade celdas al run abierto, fusionando con el anterior si comparten estilo.
-///
-/// `force_new` impide la fusión. Lo usa la celda del cursor, que tiene que
-/// quedar aislada para que la UI la pueda invertir sin conocer la rejilla.
-fn push_run(runs: &mut Vec<Run>, text: String, style: Style, columns: usize, force_new: bool) {
-    if text.is_empty() {
-        return;
-    }
-    if !force_new {
-        if let Some(last) = runs.last_mut() {
-            if last.style == style {
-                last.text.push_str(&text);
-                last.columns += columns;
-                return;
+        // Si el run tiene fondo por defecto, sin subrayado ni reverse, y sólo contiene espacios:
+        if last.style.bg == plain.bg && !last.style.underline && !last.style.reverse {
+            let trimmed_len = last.text.trim_end_matches(' ').len();
+            if trimmed_len == 0 {
+                row.runs.pop();
+                continue;
             }
+            if trimmed_len < last.text.len() {
+                let removed = last.text.len() - trimmed_len;
+                last.text.truncate(trimmed_len);
+                last.columns = last.columns.saturating_sub(removed);
+            }
+            break;
+        } else {
+            break;
         }
     }
-    runs.push(Run {
-        text,
-        style,
-        columns,
-    });
 }

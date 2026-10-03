@@ -4,6 +4,7 @@
 //! rejilla VT de `alacritty_terminal` y el viewport que el usuario ve. Es el
 //! único punto que conoce a las tres; ni la UI ni el PTY conocen a los demás.
 
+use std::cell::{Cell, RefCell};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 use alacritty_terminal::event::{Event as TermEvent, EventListener};
@@ -66,6 +67,8 @@ pub struct Session {
     pty: Pty,
     events: Receiver<TermEvent>,
     size: GridSize,
+    cached_frame: RefCell<Option<Frame>>,
+    dirty: Cell<bool>,
 }
 
 impl Session {
@@ -85,6 +88,8 @@ impl Session {
             pty,
             events,
             size,
+            cached_frame: RefCell::new(None),
+            dirty: Cell::new(true),
         })
     }
 
@@ -103,13 +108,13 @@ impl Session {
         }
         self.processor.advance(&mut self.term, &bytes);
         self.handle_internal_events();
+        self.dirty.set(true);
         true
     }
 
     /// Responde a las consultas de protocolo VT que el programa del otro lado
-    /// envía al terminal (como identificar atributos de dispositivo `\e[0c` o
-    /// color de fondo `\e]11;?`). Si el terminal no responde a estas consultas,
-    /// shells como Fish se bloquean durante 10 segundos esperando respuesta.
+    /// envía al terminal (como identificar atributos de dispositivo `\e[0c`,
+    /// color de fondo `\e]11;?`, o tamaño en píxeles).
     fn handle_internal_events(&mut self) {
         while let Ok(event) = self.events.try_recv() {
             match event {
@@ -122,6 +127,16 @@ impl Session {
                         g: 17,
                         b: 23,
                     });
+                    let _ = self.pty.write(resp.as_bytes());
+                }
+                TermEvent::TextAreaSizeRequest(formatter) => {
+                    let size = alacritty_terminal::event::WindowSize {
+                        num_lines: self.size.rows as u16,
+                        num_cols: self.size.columns as u16,
+                        cell_width: 8,
+                        cell_height: 19,
+                    };
+                    let resp = formatter(size);
                     let _ = self.pty.write(resp.as_bytes());
                 }
                 _ => {}
@@ -146,6 +161,7 @@ impl Session {
         }
         self.size = size;
         self.term.resize(Dimensions_(size));
+        self.dirty.set(true);
         self.pty.resize(size)
     }
 
@@ -153,11 +169,21 @@ impl Session {
     pub fn scroll(&mut self, lines: i32) {
         self.term
             .scroll_display(alacritty_terminal::grid::Scroll::Delta(lines));
+        self.dirty.set(true);
     }
 
-    /// El cuadro que la UI debe pintar.
+    /// El cuadro que la UI debe pintar. Si la rejilla no ha cambiado desde la
+    /// última llamada, devuelve la versión en caché sin volver a recorrer celdas.
     pub fn frame(&self) -> Frame {
-        frame::build(&self.term)
+        if !self.dirty.get() {
+            if let Some(cached) = self.cached_frame.borrow().as_ref() {
+                return cached.clone();
+            }
+        }
+        let frame = frame::build(&self.term);
+        *self.cached_frame.borrow_mut() = Some(frame.clone());
+        self.dirty.set(false);
+        frame
     }
 
     /// El estilo efectivo del terminal, para que la UI tenga los colores base.

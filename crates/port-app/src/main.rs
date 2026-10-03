@@ -12,7 +12,9 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::prelude::*;
-use gpui::{App, Application, Bounds, WindowBounds, WindowOptions, px, size};
+use gpui::{
+    App, Application, Bounds, WindowBackgroundAppearance, WindowBounds, WindowOptions, px, size,
+};
 use port_plugin_api::{KeyAction, PluginRegistry};
 use port_plugin_transparency::TransparencyPlugin;
 use port_term_core::pty::PtyConfig;
@@ -73,6 +75,7 @@ fn main() {
             .open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    window_background: WindowBackgroundAppearance::Transparent,
                     app_id: Some("port".to_string()),
                     ..Default::default()
                 },
@@ -90,11 +93,16 @@ fn main() {
             )
             .expect("no se pudo abrir la ventana");
 
-        // Latido: mantiene la ventana al día ante eventos del PTY y compositor.
+        // Latido reactivo: solo redibuja la ventana cuando el PTY realmente tiene
+        // datos nuevos. Si el shell está quieto, el uso de CPU cae a cero.
+        let session_for_poller = Rc::clone(&session);
         cx.spawn(async move |cx| {
             loop {
                 cx.background_executor().timer(Duration::from_millis(16)).await;
-                window.update(cx, |_, window, _cx| window.refresh()).ok();
+                let changed = session_for_poller.borrow_mut().pump();
+                if changed {
+                    window.update(cx, |_, window, _cx| window.refresh()).ok();
+                }
             }
         })
         .detach();

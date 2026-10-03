@@ -12,8 +12,8 @@ use std::rc::Rc;
 
 use gpui::prelude::*;
 use gpui::{
-    App, Bounds, Context, FocusHandle, Font, FontStyle, FontWeight, MouseButton, Render, TextRun,
-    Window, canvas, div, fill, point, px, rgb, size,
+    App, Bounds, Context, FocusHandle, Font, FontFallbacks, FontStyle, FontWeight, MouseButton,
+    Render, TextRun, Window, canvas, div, fill, point, px, rgb, size,
 };
 use port_plugin_api::PluginRegistry;
 use port_term_core::frame::{Frame, Rgb, Run, Style};
@@ -131,10 +131,16 @@ fn paint_frame(
     let cell_height = px(metrics.cell_height);
     let font_size = px(metrics.font_size);
 
+    let fallbacks = Some(FontFallbacks::from_fonts(vec![
+        "Symbols Nerd Font Mono".to_string(),
+        "DejaVu Sans Mono".to_string(),
+        "FreeMono".to_string(),
+    ]));
+
     let regular = Font {
         family: metrics.font_family.clone(),
         features: Default::default(),
-        fallbacks: None,
+        fallbacks: fallbacks.clone(),
         weight: FontWeight::NORMAL,
         style: FontStyle::Normal,
     };
@@ -154,13 +160,13 @@ fn paint_frame(
 
     for (row_index, row) in frame.rows.iter().enumerate() {
         let top = padding + cell_height * row_index as f32;
+        let mut left = padding;
 
         for (run_index, run) in row.runs.iter().enumerate() {
             let is_cursor = frame
                 .cursor_run
                 .is_some_and(|cursor| cursor.row == row_index && cursor.run_index == run_index);
             let style = style_of(run, is_cursor);
-            let left = padding + cell_width * run_offset(&row.runs, run_index);
             let width = cell_width * run.columns as f32;
 
             // Si el color coincide con el fondo por defecto y no es el cursor,
@@ -172,45 +178,37 @@ fn paint_frame(
                 ));
             }
 
-            if run.text.trim().is_empty() {
-                continue;
+            if !run.text.trim().is_empty() {
+                let font = match (style.bold, style.italic) {
+                    (true, true) => &bold_italic,
+                    (true, false) => &bold,
+                    (false, true) => &italic,
+                    (false, false) => &regular,
+                };
+
+                let text_run = TextRun {
+                    len: run.text.len(),
+                    font: font.clone(),
+                    color: color(style.fg),
+                    background_color: None,
+                    underline: style.underline.then(|| gpui::UnderlineStyle {
+                        color: Some(color(style.fg)),
+                        thickness: px(1.0),
+                        wavy: false,
+                    }),
+                    strikethrough: None,
+                };
+
+                window
+                    .text_system()
+                    .shape_line(run.text.clone().into(), font_size, &[text_run], Some(cell_width))
+                    .paint(point(left, top), cell_height, window, cx)
+                    .ok();
             }
 
-            let font = match (style.bold, style.italic) {
-                (true, true) => &bold_italic,
-                (true, false) => &bold,
-                (false, true) => &italic,
-                (false, false) => &regular,
-            };
-
-            let text_run = TextRun {
-                len: run.text.len(),
-                font: font.clone(),
-                color: color(style.fg),
-                background_color: None,
-                underline: style.underline.then(|| gpui::UnderlineStyle {
-                    color: Some(color(style.fg)),
-                    thickness: px(1.0),
-                    wavy: false,
-                }),
-                strikethrough: None,
-            };
-
-            window
-                .text_system()
-                .shape_line(run.text.clone().into(), font_size, &[text_run], Some(cell_width))
-                .paint(point(left, top), cell_height, window, cx)
-                .ok();
+            left += width;
         }
     }
-}
-
-/// Columna inicial de un run dentro de su fila.
-fn run_offset(runs: &[Run], run_index: usize) -> f32 {
-    runs[..run_index]
-        .iter()
-        .map(|run| run.columns as f32)
-        .sum()
 }
 
 /// Estilo con el que se pinta un run, invirtiendo el del cursor.
