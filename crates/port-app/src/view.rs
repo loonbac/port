@@ -6,6 +6,10 @@
 //! El texto se pinta directamente sobre un canvas con `shape_line`, como hace la
 //! terminal de Zed. No se usa un `div` por carácter: el motor de layout (Taffy)
 //! no garantiza que una caja de texto con altura fija conserve el glifo.
+//!
+//! Los elementos de bloque y los caracteres braille se dibujan como figuras
+//! geométricas directas con `paint_quad`, evitando costosas búsquedas en
+//! fuentes de respaldo en aplicaciones como `btop`.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -118,7 +122,7 @@ impl Render for TerminalView {
     }
 }
 
-/// Pinta el cuadro completo: un quad de fondo por celda y el texto encima.
+/// Pinta el cuadro completo: quads de fondo, glifos geométricos y texto.
 fn paint_frame(
     frame: &Frame,
     metrics: &Metrics,
@@ -158,6 +162,9 @@ fn paint_frame(
         ..regular.clone()
     };
 
+    let cw_f32 = metrics.cell_width;
+    let ch_f32 = metrics.cell_height;
+
     for (row_index, row) in frame.rows.iter().enumerate() {
         let top = padding + cell_height * row_index as f32;
         let mut left = padding;
@@ -179,6 +186,7 @@ fn paint_frame(
             }
 
             if !run.text.trim().is_empty() {
+                let fg_color = color(style.fg);
                 let font = match (style.bold, style.italic) {
                     (true, true) => &bold_italic,
                     (true, false) => &bold,
@@ -186,29 +194,195 @@ fn paint_frame(
                     (false, false) => &regular,
                 };
 
-                let text_run = TextRun {
-                    len: run.text.len(),
-                    font: font.clone(),
-                    color: color(style.fg),
-                    background_color: None,
-                    underline: style.underline.then(|| gpui::UnderlineStyle {
-                        color: Some(color(style.fg)),
-                        thickness: px(1.0),
-                        wavy: false,
-                    }),
-                    strikethrough: None,
-                };
+                let mut col_offset = 0usize;
+                let mut text_buf = String::with_capacity(run.text.len());
+                let mut text_start_col = 0usize;
 
-                window
-                    .text_system()
-                    .shape_line(run.text.clone().into(), font_size, &[text_run], Some(cell_width))
-                    .paint(point(left, top), cell_height, window, cx)
-                    .ok();
+                for ch in run.text.chars() {
+                    let char_x: f32 = (left + cell_width * col_offset as f32).into();
+                    let char_y: f32 = top.into();
+
+                    // Intentamos pintar como elemento de bloque o braille geométrico directo
+                    if paint_block_element(ch, char_x, char_y, cw_f32, ch_f32, fg_color, window)
+                        || paint_braille(ch, char_x, char_y, cw_f32, ch_f32, fg_color, window)
+                    {
+                        // Si había texto regular acumulado previo, lo pintamos antes
+                        if !text_buf.is_empty() {
+                            let text_run = TextRun {
+                                len: text_buf.len(),
+                                font: font.clone(),
+                                color: fg_color,
+                                background_color: None,
+                                underline: style.underline.then(|| gpui::UnderlineStyle {
+                                    color: Some(fg_color),
+                                    thickness: px(1.0),
+                                    wavy: false,
+                                }),
+                                strikethrough: None,
+                            };
+                            let text_x = left + cell_width * text_start_col as f32;
+                            window
+                                .text_system()
+                                .shape_line(text_buf.clone().into(), font_size, &[text_run], Some(cell_width))
+                                .paint(point(text_x, top), cell_height, window, cx)
+                                .ok();
+                            text_buf.clear();
+                        }
+                    } else {
+                        if text_buf.is_empty() {
+                            text_start_col = col_offset;
+                        }
+                        text_buf.push(ch);
+                    }
+                    col_offset += 1;
+                }
+
+                // Pintamos cualquier texto restante al final del run
+                if !text_buf.is_empty() {
+                    let text_run = TextRun {
+                        len: text_buf.len(),
+                        font: font.clone(),
+                        color: fg_color,
+                        background_color: None,
+                        underline: style.underline.then(|| gpui::UnderlineStyle {
+                            color: Some(fg_color),
+                            thickness: px(1.0),
+                            wavy: false,
+                        }),
+                        strikethrough: None,
+                    };
+                    let text_x = left + cell_width * text_start_col as f32;
+                    window
+                        .text_system()
+                        .shape_line(text_buf.into(), font_size, &[text_run], Some(cell_width))
+                        .paint(point(text_x, top), cell_height, window, cx)
+                        .ok();
+                }
             }
 
             left += width;
         }
     }
+}
+
+/// Dibuja caracteres braille (U+2800..=U+28FF) directamente como puntos geométricos.
+fn paint_braille(
+    ch: char,
+    x: f32,
+    y: f32,
+    cell_w: f32,
+    cell_h: f32,
+    color: gpui::Hsla,
+    window: &mut Window,
+) -> bool {
+    let cp = ch as u32;
+    if !(0x2800..=0x28FF).contains(&cp) {
+        return false;
+    }
+    let bits = (cp - 0x2800) as u8;
+    if bits == 0 {
+        return true;
+    }
+
+    // Matriz de 2 columnas x 4 filas
+    let dot_w = (cell_w * 0.35).max(1.5).round();
+    let dot_h = (cell_h * 0.18).max(1.5).round();
+    let col_step = cell_w * 0.45;
+    let row_step = cell_h * 0.22;
+    let offset_x = (cell_w - (col_step + dot_w)) * 0.5;
+    let offset_y = (cell_h - (row_step * 3.0 + dot_h)) * 0.5;
+
+    let dot_map: [(u8, f32, f32); 8] = [
+        (0x01, 0.0, 0.0),
+        (0x02, 0.0, 1.0),
+        (0x04, 0.0, 2.0),
+        (0x08, 1.0, 0.0),
+        (0x10, 1.0, 1.0),
+        (0x20, 1.0, 2.0),
+        (0x40, 0.0, 3.0),
+        (0x80, 1.0, 3.0),
+    ];
+
+    for (bit, col, row) in dot_map {
+        if bits & bit != 0 {
+            let dot_x = x + offset_x + col * col_step;
+            let dot_y = y + offset_y + row * row_step;
+            window.paint_quad(fill(
+                Bounds::new(point(px(dot_x), px(dot_y)), size(px(dot_w), px(dot_h))),
+                color,
+            ));
+        }
+    }
+    true
+}
+
+/// Dibuja elementos de bloque geométricos (U+2580..=U+259F y U+25A0).
+fn paint_block_element(
+    ch: char,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    color: gpui::Hsla,
+    window: &mut Window,
+) -> bool {
+    let cp = ch as u32;
+    let (bx, by, bw, bh) = match cp {
+        // ▀ mitad superior
+        0x2580 => (0.0, 0.0, 1.0, 0.5),
+        // ▁▂▃▄▅▆▇█ bloques inferiores de 1..=8 octavos
+        0x2581..=0x2588 => {
+            let eighths = (cp - 0x2580) as f32 / 8.0;
+            (0.0, 1.0 - eighths, 1.0, eighths)
+        }
+        // ▉▊▋▌▍▎▏ bloques izquierdos de 7..=1 octavos
+        0x2589..=0x258F => {
+            let eighths = (0x2590 - cp) as f32 / 8.0;
+            (0.0, 0.0, eighths, 1.0)
+        }
+        // ▐ mitad derecha
+        0x2590 => (0.5, 0.0, 0.5, 1.0),
+        // ▔ octavo superior
+        0x2594 => (0.0, 0.0, 1.0, 0.125),
+        // ▕ octavo derecho
+        0x2595 => (0.875, 0.0, 0.125, 1.0),
+        // ■ cuadrado negro
+        0x25A0 => (0.15, 0.15, 0.7, 0.7),
+        // ░ sombra suave
+        0x2591 => {
+            window.paint_quad(fill(
+                Bounds::new(point(px(x), px(y)), size(px(w), px(h))),
+                color.opacity(0.25),
+            ));
+            return true;
+        }
+        // ▒ sombra media
+        0x2592 => {
+            window.paint_quad(fill(
+                Bounds::new(point(px(x), px(y)), size(px(w), px(h))),
+                color.opacity(0.50),
+            ));
+            return true;
+        }
+        // ▓ sombra densa
+        0x2593 => {
+            window.paint_quad(fill(
+                Bounds::new(point(px(x), px(y)), size(px(w), px(h))),
+                color.opacity(0.75),
+            ));
+            return true;
+        }
+        _ => return false,
+    };
+
+    window.paint_quad(fill(
+        Bounds::new(
+            point(px(x + bx * w), px(y + by * h)),
+            size(px(bw * w), px(bh * h)),
+        ),
+        color,
+    ));
+    true
 }
 
 /// Estilo con el que se pinta un run, invirtiendo el del cursor.

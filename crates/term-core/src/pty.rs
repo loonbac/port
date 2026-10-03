@@ -86,7 +86,7 @@ impl Pty {
         std::thread::Builder::new()
             .name("port-pty-reader".to_string())
             .spawn(move || {
-                let mut buffer = [0u8; 8192];
+                let mut buffer = [0u8; 65536];
                 loop {
                     match reader.read(&mut buffer) {
                         Ok(0) => break,
