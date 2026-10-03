@@ -250,3 +250,43 @@ fn session_manager_manages_multiple_isolated_spaces() {
     assert!(manager.select(2));
     assert_eq!(manager.active_id(), 2);
 }
+
+#[test]
+fn idle_terminal_reports_no_foreground_app() {
+    let mut session = Session::spawn(plain_shell(), GridSize::new(60, 10)).expect("sesión");
+    std::thread::sleep(Duration::from_millis(300));
+
+    // Un shell en reposo no tiene ningún hijo que no sea el propio shell,
+    // así que no debe reportarse ninguna app en primer plano.
+    for _ in 0..10 {
+        session.pump();
+        assert!(
+            session.foreground_app().is_none(),
+            "una terminal en reposo no debe mostrar ninguna app en las pestañas"
+        );
+    }
+}
+
+#[test]
+fn a_running_program_becomes_the_foreground_app_after_two_samples() {
+    let mut session = Session::spawn(plain_shell(), GridSize::new(60, 10)).expect("sesión");
+    std::thread::sleep(Duration::from_millis(300));
+
+    // Se lanza un proceso de larga duración como "app" en primer plano.
+    session
+        .write(b"sleep 30\n")
+        .expect("lanzar proceso en primer plano");
+    std::thread::sleep(Duration::from_millis(250));
+
+    let mut seen = false;
+    for _ in 0..20 {
+        session.pump();
+        if let Some(app) = session.foreground_app() {
+            assert_eq!(app.bin, "sleep", "se esperaba el binario 'sleep'");
+            seen = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    assert!(seen, "un proceso en primer plano debe detectarse como app");
+}

@@ -8,6 +8,7 @@
 //! congelaría en cuanto el shell dejara de escribir. El hilo bloquea, y la UI
 //! solo recoge lo que ya está listo.
 
+use std::cell::RefCell;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -47,7 +48,16 @@ pub struct Pty {
     incoming: Receiver<Vec<u8>>,
     /// El hilo lector terminó: el otro extremo cerró el PTY.
     closed: Arc<AtomicBool>,
+    /// Último programa en primer plano ya confirmado como estable.
+    stable_app: RefCell<Option<RunningApp>>,
+    /// Candidato actual y cuántas sondeos seguidos lo han respaldado.
+    pending_app: RefCell<(Option<RunningApp>, u8)>,
 }
+
+/// Cuántas lecturas seguidas deben coincidir antes de dar por estable un programa.
+/// El renderizador del prompt y otros auxiliares viven menos de 32 ms, así que
+/// exigir dos coincidencias evita que aparezcan un fotograma en las pestañas.
+const STABILITY_SAMPLES: u8 = 2;
 
 impl Pty {
     pub fn spawn(config: PtyConfig, size: GridSize) -> std::io::Result<Self> {
@@ -109,6 +119,8 @@ impl Pty {
             child,
             incoming,
             closed,
+            stable_app: RefCell::new(None),
+            pending_app: RefCell::new((None, 0)),
         })
     }
 
@@ -175,9 +187,34 @@ impl Pty {
     /// Detecta el programa que se está ejecutando en primer plano.
     ///
     /// Recorre el árbol de hijos del shell por `/proc` y devuelve el primer
-    /// descendiente que no es otro shell. Cuando la terminal está en reposo no
-    /// hay ningún hijo que no sea el shell, así que devuelve `None`.
+    /// descendiente que no es otro shell ni un auxiliar del prompt. El resultado
+    /// debe confirmarse en dos sondeos seguidos antes de devolverse, para que
+    /// procesos muy breves (el prompt, hooks de entorno) nunca lleguen a la UI.
     pub fn foreground_app(&self) -> Option<RunningApp> {
+        let raw = self.detect_foreground_app();
+
+        let mut stable = self.stable_app.borrow_mut();
+        let mut pending = self.pending_app.borrow_mut();
+
+        match raw {
+            // Sigue igual el candidato pendiente: acumulasamples.
+            Some(ref app) if pending.0.as_ref() == Some(app) => {                pending.1 = pending.1.saturating_add(1);
+                if pending.1 >= STABILITY_SAMPLES {
+                    *stable = Some(app.clone());
+                }
+            }
+            // Cambió el candidato: empieza a contarlo desde uno.
+            other => {
+                pending.0 = other;
+                pending.1 = 1;
+            }
+        }
+
+        stable.clone()
+    }
+
+    /// Lectura cruda del proceso en primer plano, sin estabilizar.
+    fn detect_foreground_app(&self) -> Option<RunningApp> {
         let mut pid = self.process_id()?;
 
         // El límite evita un bucle infinito si `/proc` devolviera un ciclo.
@@ -192,6 +229,9 @@ impl Pty {
                 let Some(app) = describe_process(child) else {
                     continue;
                 };
+                if is_prompt_helper(&app.bin) {
+                    continue;
+                }
                 if is_shell_binary(&app.bin) {
                     nested_shell = Some(child);
                 } else {
@@ -268,6 +308,22 @@ fn is_shell_binary(bin: &str) -> bool {
             | "mosh"
             | "ssh"
             | "login"
+    )
+}
+
+/// Auxiliares que el shell lanza a su alrededor y que nunca son la app en
+/// primer plano: renderizadores del prompt y gestores de entorno.
+fn is_prompt_helper(bin: &str) -> bool {
+    matches!(
+        bin,
+        "oh-my-posh"
+            | "starship"
+            | "posh-git"
+            | "omp"
+            | "powerline"
+            | "direnv"
+            | "nix-direnv"
+            | "atuin"
     )
 }
 
