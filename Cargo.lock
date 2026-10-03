@@ -3864,6 +3864,7 @@ dependencies = [
  "port-plugin-api",
  "port-plugin-font",
  "port-plugin-font-zoom",
+ "port-plugin-menu-customizer",
  "port-plugin-shortcuts",
  "port-plugin-transparency",
  "port-term-core",
@@ -3890,6 +3891,14 @@ version = "0.1.0"
 dependencies = [
  "port-plugin-api",
  "port-term-core",
+]
+
+[[package]]
+name = "port-plugin-menu-customizer"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "port-plugin-api",
 ]
 
 [[package]]

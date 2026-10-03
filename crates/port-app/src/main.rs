@@ -18,13 +18,15 @@ use gpui::{
 use port_plugin_api::{KeyAction, PluginRegistry};
 use port_plugin_font::FontPlugin;
 use port_plugin_font_zoom::FontZoomPlugin;
+use port_plugin_menu_customizer::MenuCustomizerPlugin;
 use port_plugin_shortcuts::ShortcutsPlugin;
 use port_plugin_transparency::TransparencyPlugin;
+use port_term_core::input::Key;
 use port_term_core::pty::PtyConfig;
 use port_term_core::session::Session;
 
 use crate::metrics::Metrics;
-use crate::view::TerminalView;
+use crate::view::{MenuState, TerminalView};
 
 /// Tamaño de fuente base de fábrica si no hay configuración.
 const BASE_FONT_SIZE: f32 = 14.0;
@@ -41,6 +43,7 @@ fn main() {
         plugin_registry.register(FontPlugin::new("FiraCode Nerd Font Mono"));
         plugin_registry.register(FontZoomPlugin::new(BASE_FONT_SIZE));
         plugin_registry.register(ShortcutsPlugin::new());
+        plugin_registry.register(MenuCustomizerPlugin::default());
 
         // Carga la configuración desde ~/.config/port/config.md o la crea con los defaults
         let _ = plugin_registry.load_or_create_default_config();
@@ -57,19 +60,60 @@ fn main() {
         ));
 
         let plugins = Rc::new(RefCell::new(plugin_registry));
+        let menu_state = Rc::new(RefCell::new(MenuState::default()));
 
-        // En una terminal cada tecla le pertenece al PTY, salvo que un plugin
-        // registrado decida consumirla primero.
+        // En una terminal cada tecla le pertenece al PTY, salvo que el menú de plugins
+        // esté activo o un plugin decida consumirla.
         let session_for_keys = Rc::clone(&session);
         let plugins_for_keys = Rc::clone(&plugins);
+        let menu_state_for_keys = Rc::clone(&menu_state);
         cx.intercept_keystrokes(move |ev, window, _cx| {
             if let Some(key) = keys::to_core_key(&ev.keystroke) {
-                // Si un plugin consume la tecla (ej. atajo de tab o sidebar),
-                // no se envía al PTY.
+                // Comprobación de atajo de apertura/cierre del menú de plugins (Ctrl+Shift+L por defecto)
+                let shortcut = plugins_for_keys.borrow().effective_menu_shortcut();
+                if matches_shortcut(&key, shortcut) {
+                    let mut s = menu_state_for_keys.borrow_mut();
+                    s.open = !s.open;
+                    s.selected_index = 0;
+                    drop(s);
+                    window.refresh();
+                    return;
+                }
+
+                // Si el menú está abierto, intercepta la navegación y acciones
+                if menu_state_for_keys.borrow().open {
+                    match key.key.as_str() {
+                        "Escape" => {
+                            menu_state_for_keys.borrow_mut().open = false;
+                        }
+                        "Up" | "k" => {
+                            let mut s = menu_state_for_keys.borrow_mut();
+                            s.selected_index = s.selected_index.saturating_sub(1);
+                        }
+                        "Down" | "j" => {
+                            let mut s = menu_state_for_keys.borrow_mut();
+                            let max = plugins_for_keys.borrow().len().saturating_sub(1);
+                            s.selected_index = (s.selected_index + 1).min(max);
+                        }
+                        "Enter" | "Return" | " " => {
+                            let idx = menu_state_for_keys.borrow().selected_index;
+                            let mut reg = plugins_for_keys.borrow_mut();
+                            if let Some(_new_status) = reg.toggle_enabled_at(idx) {
+                                let _ = reg.save_all_to_default_file();
+                            }
+                        }
+                        _ => {}
+                    }
+                    window.refresh();
+                    return;
+                }
+
+                // Si un plugin consume la tecla (ej. atajo de tab o sidebar), no se envía al PTY
                 if plugins_for_keys.borrow().dispatch_key(&key) == KeyAction::Consume {
                     window.refresh();
                     return;
                 }
+
                 let mut session = session_for_keys.borrow_mut();
                 let mode = session.cursor_key_mode();
                 if let Some(bytes) = port_term_core::input::encode(&key, mode) {
@@ -83,6 +127,7 @@ fn main() {
         let session_for_view = Rc::clone(&session);
         let metrics_for_view = metrics.clone();
         let plugins_for_view = Rc::clone(&plugins);
+        let menu_state_for_view = Rc::clone(&menu_state);
 
         let window = cx
             .open_window(
@@ -100,6 +145,7 @@ fn main() {
                             metrics_for_view,
                             focus_handle,
                             plugins_for_view,
+                            menu_state_for_view,
                         )
                     })
                 },
@@ -128,7 +174,7 @@ fn main() {
             loop {
                 cx.background_executor().timer(Duration::from_millis(150)).await;
                 let reloaded = plugins_for_watcher
-                    .borrow()
+                    .borrow_mut()
                     .reload_if_modified()
                     .unwrap_or(false);
                 if reloaded {
@@ -139,6 +185,47 @@ fn main() {
         .detach();
 
         cx.activate(true);
-
     });
+}
+
+/// Comprueba si una pulsación de tecla coincide con una cadena de atajo (ej. "ctrl+shift+l").
+fn matches_shortcut(key: &Key, pattern: &str) -> bool {
+    let parts: Vec<&str> = pattern.split('+').map(str::trim).collect();
+    if parts.is_empty() {
+        return false;
+    }
+    let mut ctrl = false;
+    let mut alt = false;
+    let mut shift = false;
+    let mut target_key = "";
+
+    for (i, part) in parts.iter().enumerate() {
+        let lower = part.to_lowercase();
+        if i == parts.len() - 1 {
+            target_key = part;
+        } else {
+            match lower.as_str() {
+                "ctrl" | "control" => ctrl = true,
+                "alt" => alt = true,
+                "shift" => shift = true,
+                _ => return false,
+            }
+        }
+    }
+
+    if key.ctrl != ctrl || key.alt != alt || key.shift != shift {
+        return false;
+    }
+
+    let k_lower = key.key.to_lowercase();
+    let target_lower = target_key.to_lowercase();
+    if k_lower == target_lower {
+        return true;
+    }
+    if let Some(text) = &key.text {
+        if text.to_lowercase() == target_lower {
+            return true;
+        }
+    }
+    false
 }

@@ -3,7 +3,8 @@ use std::sync::Arc;
 
 use gpui::{Element, div};
 use port_plugin_api::{
-    AppearanceHook, InputHook, KeyAction, LayoutHook, Plugin, PluginConfig, PluginRegistry,
+    AppearanceHook, InputHook, KeyAction, LayoutHook, Plugin, PluginConfig,
+    PluginManagerHook, PluginRegistry,
 };
 use port_term_core::frame::Rgb;
 use port_term_core::input::Key;
@@ -97,6 +98,32 @@ impl Plugin for MockConfigurablePlugin {
     }
 }
 
+struct MockMenuPatchPlugin;
+
+impl PluginManagerHook for MockMenuPatchPlugin {
+    fn toggle_shortcut(&self) -> Option<&'static str> {
+        Some("ctrl+shift+p")
+    }
+
+    fn menu_title(&self) -> Option<&'static str> {
+        Some("Custom Plugins Patch")
+    }
+}
+
+impl Plugin for MockMenuPatchPlugin {
+    fn id(&self) -> &'static str {
+        "menu-patch"
+    }
+
+    fn name(&self) -> &'static str {
+        "Mock Menu Patch"
+    }
+
+    fn plugin_manager_hook(&self) -> Option<&dyn PluginManagerHook> {
+        Some(self)
+    }
+}
+
 struct MockTintPlugin;
 
 impl AppearanceHook for MockTintPlugin {
@@ -187,6 +214,8 @@ fn empty_registry_has_default_values() {
     assert_eq!(registry.dispatch_key(&Key::new("a")), KeyAction::Pass);
     assert_eq!(registry.top_bars().len(), 0);
     assert_eq!(registry.left_sidebars().len(), 0);
+    assert_eq!(registry.effective_menu_shortcut(), "ctrl+shift+l");
+    assert_eq!(registry.effective_menu_title(), "Gestor de Plugins (PORT)");
 }
 
 #[test]
@@ -201,6 +230,25 @@ fn appearance_hook_calculates_effective_opacity_and_tint() {
         registry.effective_background(Rgb::new(0, 0, 0)),
         Rgb::new(20, 30, 40)
     );
+}
+
+#[test]
+fn disabling_plugin_omits_its_effects() {
+    let mut registry = PluginRegistry::new();
+    registry.register(MockTransparencyPlugin { opacity: 0.70 });
+    assert_eq!(registry.effective_opacity(), 0.70);
+
+    // Desactivamos el plugin de transparencia
+    assert!(registry.set_enabled("transparency", false));
+    assert!(!registry.is_enabled("transparency"));
+
+    // La opacidad vuelve al 1.0 por defecto
+    assert_eq!(registry.effective_opacity(), 1.0);
+
+    // Al alternar vuelve a estar activo
+    assert_eq!(registry.toggle_enabled("transparency"), Some(true));
+    assert!(registry.is_enabled("transparency"));
+    assert_eq!(registry.effective_opacity(), 0.70);
 }
 
 #[test]
@@ -240,6 +288,10 @@ fn input_hook_can_consume_or_pass_keys() {
     let ctrl_t = Key::new("t").ctrl();
     assert_eq!(registry.dispatch_key(&ctrl_t), KeyAction::Consume);
 
+    // Si se desactiva el plugin, la tecla pasa al PTY
+    registry.set_enabled("shortcut", false);
+    assert_eq!(registry.dispatch_key(&ctrl_t), KeyAction::Pass);
+
     // Cualquier otra tecla pasa
     let plain_a = Key::new("a");
     assert_eq!(registry.dispatch_key(&plain_a), KeyAction::Pass);
@@ -256,6 +308,20 @@ fn layout_hook_collects_slot_elements() {
 }
 
 #[test]
+fn plugin_manager_hook_can_patch_shortcut_and_title() {
+    let mut registry = PluginRegistry::new();
+    registry.register(MockMenuPatchPlugin);
+
+    assert_eq!(registry.effective_menu_shortcut(), "ctrl+shift+p");
+    assert_eq!(registry.effective_menu_title(), "Custom Plugins Patch");
+
+    // Si se deshabilita el parche, vuelve a los valores core por defecto
+    registry.set_enabled("menu-patch", false);
+    assert_eq!(registry.effective_menu_shortcut(), "ctrl+shift+l");
+    assert_eq!(registry.effective_menu_title(), "Gestor de Plugins (PORT)");
+}
+
+#[test]
 fn registry_creates_and_loads_configuration_file() {
     let dir = std::env::temp_dir().join(format!("port-test-cfg-{}", std::process::id()));
     let path = dir.join("config.md");
@@ -267,20 +333,24 @@ fn registry_creates_and_loads_configuration_file() {
         font_size: Arc::clone(&font_size),
     });
 
-    // 1. Archivo no existe: se crea con el bloque de font-zoom
+    // 1. Archivo no existe: se crea con el bloque de font-zoom incluyendo enabled = true
     registry.load_or_create_config(&path).unwrap();
     assert!(path.exists());
     let file_text = std::fs::read_to_string(&path).unwrap();
-    assert!(file_text.contains("```font-zoom\ndefault_size = 14\n```"));
+    assert!(file_text.contains("default_size = 14"));
+    assert!(file_text.contains("enabled = true"));
     assert_eq!(font_size.load(Ordering::SeqCst), 14);
 
-    // 2. Modificamos el archivo a mano (ej. default_size = 22)
-    let modified = file_text.replace("default_size = 14", "default_size = 22");
+    // 2. Modificamos el archivo a mano (ej. default_size = 22 y enabled = false)
+    let modified = file_text
+        .replace("default_size = 14", "default_size = 22")
+        .replace("enabled = true", "enabled = false");
     std::fs::write(&path, modified).unwrap();
 
-    // 3. Volvemos a cargar y debe reflejar 22
+    // 3. Volvemos a cargar y debe reflejar 22 e inactivo
     registry.load_or_create_config(&path).unwrap();
     assert_eq!(font_size.load(Ordering::SeqCst), 22);
+    assert!(!registry.is_enabled("font-zoom"));
 
     // 4. El plugin actualiza su tamaño y guarda
     font_size.store(28, Ordering::SeqCst);
@@ -288,7 +358,8 @@ fn registry_creates_and_loads_configuration_file() {
     assert!(saved);
 
     let updated_text = std::fs::read_to_string(&path).unwrap();
-    assert!(updated_text.contains("```font-zoom\ndefault_size = 28\n```"));
+    assert!(updated_text.contains("default_size = 28"));
+    assert!(updated_text.contains("enabled = false"));
 
     let _ = std::fs::remove_dir_all(&dir);
 }

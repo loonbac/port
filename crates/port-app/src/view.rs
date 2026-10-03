@@ -16,14 +16,21 @@ use std::rc::Rc;
 
 use gpui::prelude::*;
 use gpui::{
-    App, Bounds, Context, FocusHandle, Font, FontFallbacks, FontStyle, FontWeight, MouseButton,
-    Render, TextRun, Window, canvas, div, fill, point, px, rgb, size,
+    anchored, deferred, App, Bounds, Context, FocusHandle, Font, FontFallbacks, FontStyle,
+    FontWeight, MouseButton, Render, TextRun, Window, canvas, div, fill, point, px, rgb, size,
 };
-use port_plugin_api::PluginRegistry;
+use port_plugin_api::{PluginInfo, PluginRegistry};
 use port_term_core::frame::{Frame, Rgb, Run, Style};
 use port_term_core::session::Session;
 
 use crate::metrics::Metrics;
+
+/// Estado visual del menú gestor de plugins.
+#[derive(Debug, Default, Clone)]
+pub struct MenuState {
+    pub open: bool,
+    pub selected_index: usize,
+}
 
 pub struct TerminalView {
     session: Rc<RefCell<Session>>,
@@ -31,6 +38,7 @@ pub struct TerminalView {
     background: Rgb,
     focus_handle: FocusHandle,
     plugins: Rc<RefCell<PluginRegistry>>,
+    menu_state: Rc<RefCell<MenuState>>,
 }
 
 impl TerminalView {
@@ -39,6 +47,7 @@ impl TerminalView {
         metrics: Metrics,
         focus_handle: FocusHandle,
         plugins: Rc<RefCell<PluginRegistry>>,
+        menu_state: Rc<RefCell<MenuState>>,
     ) -> Self {
         let background = session.borrow().default_style().bg;
         Self {
@@ -47,6 +56,7 @@ impl TerminalView {
             background,
             focus_handle,
             plugins,
+            menu_state,
         }
     }
 }
@@ -68,6 +78,20 @@ impl Render for TerminalView {
         let top_bars = plugins.top_bars();
         let left_sidebars = plugins.left_sidebars();
         let bottom_bars = plugins.bottom_bars();
+
+        let plugin_list = plugins.list_plugins();
+        let menu_title = plugins.effective_menu_title().to_string();
+
+        let menu_state = self.menu_state.borrow();
+        let menu_open = menu_state.open;
+        let selected_index = menu_state.selected_index;
+        drop(menu_state);
+
+        let custom_menu = if menu_open {
+            plugins.render_custom_menu(&plugin_list, selected_index)
+        } else {
+            None
+        };
 
         let metrics = Metrics::new(font_size, self.metrics.padding);
         let grid = metrics.grid_for(width, height);
@@ -134,8 +158,150 @@ impl Render for TerminalView {
             root = root.child(bar);
         }
 
+        // Si el menú de plugins está abierto, se proyecta como overlay flotante
+        if menu_open {
+            if let Some(custom) = custom_menu {
+                root = root.child(custom);
+            } else {
+                root = root.child(render_core_plugin_menu(
+                    &plugin_list,
+                    selected_index,
+                    &menu_title,
+                    width,
+                    height,
+                ));
+            }
+        }
+
         root
     }
+}
+
+/// Renderiza el modal nativo de gestión de plugins del core de PORT.
+fn render_core_plugin_menu(
+    plugins: &[PluginInfo],
+    selected_index: usize,
+    title: &str,
+    window_width: f32,
+    window_height: f32,
+) -> impl IntoElement {
+    let modal_w = 540.0f32.min(window_width - 40.0);
+    let left = ((window_width - modal_w) * 0.5).max(10.0);
+    let top = (window_height * 0.12).max(20.0);
+
+    let mut list = div().flex().flex_col().gap_1();
+
+    for (i, p) in plugins.iter().enumerate() {
+        let is_selected = i == selected_index;
+        let (status_text, status_color) = if p.enabled {
+            ("[✔ ACTIVO]", rgb(0x3fb950))
+        } else {
+            ("[✖ INACTIVO]", rgb(0xf85149))
+        };
+
+        let row_bg = if is_selected {
+            rgb(0x21262d)
+        } else {
+            rgb(0x161b22)
+        };
+
+        let row_border = if is_selected {
+            rgb(0x58a6ff)
+        } else {
+            rgb(0x30363d)
+        };
+
+        let item = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .p_2()
+            .rounded_md()
+            .bg(row_bg)
+            .border_1()
+            .border_color(row_border)
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(status_color)
+                            .child(status_text),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(13.0))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(rgb(0xf0f6fc))
+                            .child(p.name.clone()),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(rgb(0x8b949e))
+                            .child(format!("({})", p.id)),
+                    ),
+            )
+            .child(
+                div()
+                    .text_size(px(12.0))
+                    .text_color(rgb(0x6e7681))
+                    .child(format!("v{}", p.version)),
+            );
+
+        list = list.child(item);
+    }
+
+    let modal = div()
+        .w(px(modal_w))
+        .p_4()
+        .rounded_lg()
+        .bg(rgb(0x0d1117))
+        .border_1()
+        .border_color(rgb(0x30363d))
+        .flex()
+        .flex_col()
+        .gap_3()
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .text_size(px(15.0))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(rgb(0x58a6ff))
+                        .child(format!("🔌 {}", title)),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(rgb(0x8b949e))
+                        .child("PORT Core"),
+                ),
+        )
+        .child(
+            div()
+                .text_size(px(12.0))
+                .text_color(rgb(0x8b949e))
+                .child("[↑/↓] Navegar   [Espacio/Enter] Alternar   [Esc] Cerrar"),
+        )
+        .child(list);
+
+    deferred(
+        anchored()
+            .position(point(px(left), px(top)))
+            .child(modal),
+    )
+    .priority(100)
 }
 
 /// Pinta el cuadro completo: quads de fondo, glifos geométricos y texto.

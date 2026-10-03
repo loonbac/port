@@ -2,7 +2,7 @@
 //!
 //! Este crate define la API pública con la que interactúan los plugins.
 //! Los plugins son componentes in-process desacoplados que extienden
-//! la apariencia, la entrada, el layout o la configuración de la terminal sin tocar el núcleo.
+//! la apariencia, la entrada, el layout, el menú o la configuración de la terminal sin tocar el núcleo.
 
 pub mod config;
 
@@ -16,6 +16,15 @@ use port_term_core::frame::Rgb;
 use port_term_core::input::Key;
 
 pub use config::{ConfigFile, PluginConfig};
+
+/// Información básica y estado de un plugin registrado.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginInfo {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub enabled: bool,
+}
 
 /// Acción resultante tras procesar una pulsación en un hook de entrada.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,6 +90,26 @@ pub trait LayoutHook {
     }
 }
 
+/// Capacidades de personalización y sustitución del menú gestor de plugins del core.
+pub trait PluginManagerHook {
+    /// Atajo de teclado para alternar la visibilidad del menú (por defecto "ctrl+shift+l").
+    fn toggle_shortcut(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// Título personalizado para el encabezado del menú de plugins.
+    fn menu_title(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// Permite a un plugin sustituir por completo el renderizado visual del menú de plugins.
+    /// Recibe la lista completa de plugins registrados y el índice actualmente seleccionado.
+    fn render_menu(&self, plugins: &[PluginInfo], selected_index: usize) -> Option<AnyElement> {
+        let _ = (plugins, selected_index);
+        None
+    }
+}
+
 /// Interfaz base que todo plugin de PORT debe implementar.
 pub trait Plugin: 'static {
     /// Identificador único del plugin en formato kebab-case (ej. "transparency", "font-zoom").
@@ -109,6 +138,11 @@ pub trait Plugin: 'static {
         None
     }
 
+    /// Hook para personalizar o extender el menú de gestión de plugins del core.
+    fn plugin_manager_hook(&self) -> Option<&dyn PluginManagerHook> {
+        None
+    }
+
     /// Configuración por defecto que este plugin define al crear el archivo.
     fn default_config(&self) -> Option<PluginConfig> {
         None
@@ -125,10 +159,15 @@ pub trait Plugin: 'static {
     }
 }
 
+struct RegisteredPlugin {
+    plugin: Box<dyn Plugin>,
+    enabled: bool,
+}
+
 /// Registro central de plugins activos de la terminal.
 #[derive(Default)]
 pub struct PluginRegistry {
-    plugins: Vec<Box<dyn Plugin>>,
+    plugins: Vec<RegisteredPlugin>,
     config_path: RefCell<Option<PathBuf>>,
     last_modified: Cell<Option<SystemTime>>,
 }
@@ -143,17 +182,23 @@ impl PluginRegistry {
         }
     }
 
-    /// Registra un nuevo plugin en la terminal.
+    /// Registra un nuevo plugin en la terminal, activo por defecto.
     pub fn register<P: Plugin>(&mut self, plugin: P) {
-        self.plugins.push(Box::new(plugin));
+        self.plugins.push(RegisteredPlugin {
+            plugin: Box::new(plugin),
+            enabled: true,
+        });
     }
 
-    /// Registra un plugin ya empaquetado en Box.
+    /// Registra un plugin ya empaquetado en Box, activo por defecto.
     pub fn register_boxed(&mut self, plugin: Box<dyn Plugin>) {
-        self.plugins.push(plugin);
+        self.plugins.push(RegisteredPlugin {
+            plugin,
+            enabled: true,
+        });
     }
 
-    /// Devuelve el número de plugins registrados.
+    /// Devuelve el número total de plugins registrados.
     pub fn len(&self) -> usize {
         self.plugins.len()
     }
@@ -163,13 +208,103 @@ impl PluginRegistry {
         self.plugins.is_empty()
     }
 
-    /// Calcula la opacidad efectiva combinando los plugins de apariencia.
+    /// Consulta si un plugin específico está habilitado.
+    pub fn is_enabled(&self, id: &str) -> bool {
+        self.plugins
+            .iter()
+            .find(|p| p.plugin.id() == id)
+            .map(|p| p.enabled)
+            .unwrap_or(false)
+    }
+
+    /// Habilita o deshabilita un plugin por su identificador.
+    pub fn set_enabled(&mut self, id: &str, enabled: bool) -> bool {
+        if let Some(entry) = self.plugins.iter_mut().find(|p| p.plugin.id() == id) {
+            entry.enabled = enabled;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Alterna el estado activo/inactivo de un plugin por su identificador.
+    pub fn toggle_enabled(&mut self, id: &str) -> Option<bool> {
+        let entry = self.plugins.iter_mut().find(|p| p.plugin.id() == id)?;
+        entry.enabled = !entry.enabled;
+        Some(entry.enabled)
+    }
+
+    /// Alterna el estado activo/inactivo por índice de posición.
+    pub fn toggle_enabled_at(&mut self, index: usize) -> Option<bool> {
+        let entry = self.plugins.get_mut(index)?;
+        entry.enabled = !entry.enabled;
+        Some(entry.enabled)
+    }
+
+    /// Devuelve la lista descriptiva de todos los plugins y su estado de activación.
+    pub fn list_plugins(&self) -> Vec<PluginInfo> {
+        self.plugins
+            .iter()
+            .map(|entry| PluginInfo {
+                id: entry.plugin.id().to_string(),
+                name: entry.plugin.name().to_string(),
+                version: entry.plugin.version().to_string(),
+                enabled: entry.enabled,
+            })
+            .collect()
+    }
+
+    /// Atajo efectivo para abrir/cerrar el menú de plugins (por defecto "ctrl+shift+l").
+    pub fn effective_menu_shortcut(&self) -> &'static str {
+        for entry in &self.plugins {
+            if entry.enabled {
+                if let Some(hook) = entry.plugin.plugin_manager_hook() {
+                    if let Some(shortcut) = hook.toggle_shortcut() {
+                        return shortcut;
+                    }
+                }
+            }
+        }
+        "ctrl+shift+l"
+    }
+
+    /// Título efectivo para el encabezado del menú de plugins.
+    pub fn effective_menu_title(&self) -> &'static str {
+        for entry in &self.plugins {
+            if entry.enabled {
+                if let Some(hook) = entry.plugin.plugin_manager_hook() {
+                    if let Some(title) = hook.menu_title() {
+                        return title;
+                    }
+                }
+            }
+        }
+        "Gestor de Plugins (PORT)"
+    }
+
+    /// Renderizado visual del menú provisto por un plugin personalizado, si alguno lo define.
+    pub fn render_custom_menu(&self, plugins: &[PluginInfo], selected_index: usize) -> Option<AnyElement> {
+        for entry in &self.plugins {
+            if entry.enabled {
+                if let Some(hook) = entry.plugin.plugin_manager_hook() {
+                    if let Some(element) = hook.render_menu(plugins, selected_index) {
+                        return Some(element);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Calcula la opacidad efectiva combinando los plugins de apariencia activos.
     /// Si ningún plugin especifica opacidad, el valor por defecto es `1.0` (opaco).
-    /// Si varios plugins especifican opacidad, se toma el valor mínimo (más transparente).
     pub fn effective_opacity(&self) -> f32 {
         let mut min_opacity = 1.0f32;
-        for plugin in &self.plugins {
-            if let Some(hook) = plugin.appearance_hook() {
+        for entry in &self.plugins {
+            if !entry.enabled {
+                continue;
+            }
+            if let Some(hook) = entry.plugin.appearance_hook() {
                 if let Some(op) = hook.opacity() {
                     min_opacity = min_opacity.min(op.clamp(0.0, 1.0));
                 }
@@ -178,20 +313,26 @@ impl PluginRegistry {
         min_opacity
     }
 
-    /// Calcula el color de fondo efectivo aplicando los tintes de los plugins en orden.
+    /// Calcula el color de fondo efectivo aplicando los tintes de los plugins activos en orden.
     pub fn effective_background(&self, mut base: Rgb) -> Rgb {
-        for plugin in &self.plugins {
-            if let Some(hook) = plugin.appearance_hook() {
+        for entry in &self.plugins {
+            if !entry.enabled {
+                continue;
+            }
+            if let Some(hook) = entry.plugin.appearance_hook() {
                 base = hook.background_tint(base);
             }
         }
         base
     }
 
-    /// Obtiene la familia de fuente configurada por los plugins, o el valor por defecto.
+    /// Obtiene la familia de fuente configurada por los plugins activos, o el valor por defecto.
     pub fn effective_font_family(&self, default: &str) -> String {
-        for plugin in &self.plugins {
-            if let Some(hook) = plugin.appearance_hook() {
+        for entry in &self.plugins {
+            if !entry.enabled {
+                continue;
+            }
+            if let Some(hook) = entry.plugin.appearance_hook() {
                 if let Some(family) = hook.font_family() {
                     return family;
                 }
@@ -200,10 +341,13 @@ impl PluginRegistry {
         default.to_string()
     }
 
-    /// Obtiene el tamaño de fuente configurado por los plugins, o el valor por defecto.
+    /// Obtiene el tamaño de fuente configurado por los plugins activos, o el valor por defecto.
     pub fn effective_font_size(&self, default: f32) -> f32 {
-        for plugin in &self.plugins {
-            if let Some(hook) = plugin.appearance_hook() {
+        for entry in &self.plugins {
+            if !entry.enabled {
+                continue;
+            }
+            if let Some(hook) = entry.plugin.appearance_hook() {
                 if let Some(size) = hook.font_size() {
                     return size;
                 }
@@ -212,11 +356,14 @@ impl PluginRegistry {
         default
     }
 
-    /// Fuentes de respaldo acumuladas de los plugins, o un conjunto predeterminado de símbolos.
+    /// Fuentes de respaldo acumuladas de los plugins activos.
     pub fn effective_font_fallbacks(&self) -> Vec<String> {
         let mut fallbacks = Vec::new();
-        for plugin in &self.plugins {
-            if let Some(hook) = plugin.appearance_hook() {
+        for entry in &self.plugins {
+            if !entry.enabled {
+                continue;
+            }
+            if let Some(hook) = entry.plugin.appearance_hook() {
                 if let Some(fbs) = hook.font_fallbacks() {
                     fallbacks.extend(fbs);
                 }
@@ -232,11 +379,13 @@ impl PluginRegistry {
         fallbacks
     }
 
-    /// Despacha una tecla a través de los hooks de entrada registrados.
-    /// Se detiene en el primer plugin que consuma la tecla.
+    /// Despacha una tecla a través de los hooks de entrada de los plugins activos.
     pub fn dispatch_key(&self, key: &Key) -> KeyAction {
-        for plugin in &self.plugins {
-            if let Some(hook) = plugin.input_hook() {
+        for entry in &self.plugins {
+            if !entry.enabled {
+                continue;
+            }
+            if let Some(hook) = entry.plugin.input_hook() {
                 if hook.on_key(key) == KeyAction::Consume {
                     return KeyAction::Consume;
                 }
@@ -245,11 +394,14 @@ impl PluginRegistry {
         KeyAction::Pass
     }
 
-    /// Recopila los elementos para la barra superior (top_bar).
+    /// Recopila los elementos para la barra superior (top_bar) de los plugins activos.
     pub fn top_bars(&self) -> Vec<AnyElement> {
         let mut elements = Vec::new();
-        for plugin in &self.plugins {
-            if let Some(hook) = plugin.layout_hook() {
+        for entry in &self.plugins {
+            if !entry.enabled {
+                continue;
+            }
+            if let Some(hook) = entry.plugin.layout_hook() {
                 if let Some(elem) = hook.top_bar() {
                     elements.push(elem);
                 }
@@ -258,11 +410,14 @@ impl PluginRegistry {
         elements
     }
 
-    /// Recopila los elementos para la barra lateral izquierda (left_sidebar).
+    /// Recopila los elementos para la barra lateral izquierda de los plugins activos.
     pub fn left_sidebars(&self) -> Vec<AnyElement> {
         let mut elements = Vec::new();
-        for plugin in &self.plugins {
-            if let Some(hook) = plugin.layout_hook() {
+        for entry in &self.plugins {
+            if !entry.enabled {
+                continue;
+            }
+            if let Some(hook) = entry.plugin.layout_hook() {
                 if let Some(elem) = hook.left_sidebar() {
                     elements.push(elem);
                 }
@@ -271,11 +426,14 @@ impl PluginRegistry {
         elements
     }
 
-    /// Recopila los elementos para la barra inferior (bottom_bar).
+    /// Recopila los elementos para la barra inferior de los plugins activos.
     pub fn bottom_bars(&self) -> Vec<AnyElement> {
         let mut elements = Vec::new();
-        for plugin in &self.plugins {
-            if let Some(hook) = plugin.layout_hook() {
+        for entry in &self.plugins {
+            if !entry.enabled {
+                continue;
+            }
+            if let Some(hook) = entry.plugin.layout_hook() {
                 if let Some(elem) = hook.bottom_bar() {
                     elements.push(elem);
                 }
@@ -284,36 +442,43 @@ impl PluginRegistry {
         elements
     }
 
-    /// Recopila las configuraciones por defecto de todos los plugins registrados.
+    /// Recopila las configuraciones por defecto de todos los plugins registrados,
+    /// incluyendo su estado enabled = true.
     pub fn default_configs(&self) -> BTreeMap<String, PluginConfig> {
         let mut map = BTreeMap::new();
-        for plugin in &self.plugins {
-            if let Some(cfg) = plugin.default_config() {
-                map.insert(plugin.id().to_string(), cfg);
+        for entry in &self.plugins {
+            let mut cfg = entry.plugin.default_config().unwrap_or_default();
+            if !cfg.values.contains_key("enabled") {
+                cfg.set("enabled", true);
             }
+            map.insert(entry.plugin.id().to_string(), cfg);
         }
         map
     }
 
-    /// Aplica la configuración leída del archivo a cada plugin registrado correspondiente.
-    pub fn load_configs(&self, configs: &BTreeMap<String, PluginConfig>) {
-        for plugin in &self.plugins {
-            if let Some(cfg) = configs.get(plugin.id()) {
-                plugin.load_config(cfg);
+    /// Aplica la configuración leída del archivo a cada plugin registrado correspondiente,
+    /// actualizando también su estado `enabled`.
+    pub fn load_configs(&mut self, configs: &BTreeMap<String, PluginConfig>) {
+        for entry in &mut self.plugins {
+            if let Some(cfg) = configs.get(entry.plugin.id()) {
+                if let Some(enabled) = cfg.get_bool("enabled") {
+                    entry.enabled = enabled;
+                }
+                entry.plugin.load_config(cfg);
             }
         }
     }
 
     /// Carga la configuración desde el archivo predeterminado (`~/.config/port/config.md`)
     /// o lo crea con los valores por defecto de los plugins si no existe.
-    pub fn load_or_create_default_config(&self) -> std::io::Result<PathBuf> {
+    pub fn load_or_create_default_config(&mut self) -> std::io::Result<PathBuf> {
         let path = ConfigFile::default_path();
         self.load_or_create_config(&path)?;
         Ok(path)
     }
 
     /// Carga la configuración desde una ruta concreta o la crea si no existe.
-    pub fn load_or_create_config(&self, path: &Path) -> std::io::Result<()> {
+    pub fn load_or_create_config(&mut self, path: &Path) -> std::io::Result<()> {
         let defaults = self.default_configs();
         let configs = ConfigFile::load_or_create(path, &defaults)?;
         self.load_configs(&configs);
@@ -325,7 +490,7 @@ impl PluginRegistry {
 
     /// Comprueba si el archivo de configuración fue modificado en disco desde la última
     /// lectura. Si cambió, recarga las configuraciones de los plugins y devuelve `Ok(true)`.
-    pub fn reload_if_modified(&self) -> std::io::Result<bool> {
+    pub fn reload_if_modified(&mut self) -> std::io::Result<bool> {
         let path = match self.config_path.borrow().as_ref() {
             Some(p) => p.clone(),
             None => return Ok(false),
@@ -353,34 +518,40 @@ impl PluginRegistry {
         Ok(true)
     }
 
-    /// Guarda la configuración actual de un plugin específico en el archivo.
+    /// Guarda la configuración actual de un plugin específico en el archivo, incluyendo `enabled`.
     pub fn save_plugin_config(&self, plugin_id: &str, path: &Path) -> std::io::Result<bool> {
-        for plugin in &self.plugins {
-            if plugin.id() == plugin_id {
-                if let Some(cfg) = plugin.save_config() {
-                    ConfigFile::save_plugin(path, plugin_id, &cfg)?;
-                    if self.config_path.borrow().as_deref() == Some(path) {
-                        self.last_modified
-                            .set(std::fs::metadata(path).and_then(|m| m.modified()).ok());
-                    }
-                    return Ok(true);
+        for entry in &self.plugins {
+            if entry.plugin.id() == plugin_id {
+                let mut cfg = entry.plugin.save_config().unwrap_or_default();
+                cfg.set("enabled", entry.enabled);
+                ConfigFile::save_plugin(path, plugin_id, &cfg)?;
+                if self.config_path.borrow().as_deref() == Some(path) {
+                    self.last_modified
+                        .set(std::fs::metadata(path).and_then(|m| m.modified()).ok());
                 }
+                return Ok(true);
             }
         }
         Ok(false)
     }
 
-    /// Guarda la configuración actual de todos los plugins registrados que implementan `save_config`.
+    /// Guarda la configuración y estado actual de todos los plugins registrados.
     pub fn save_all_configs(&self, path: &Path) -> std::io::Result<()> {
-        for plugin in &self.plugins {
-            if let Some(cfg) = plugin.save_config() {
-                ConfigFile::save_plugin(path, plugin.id(), &cfg)?;
-            }
+        for entry in &self.plugins {
+            let mut cfg = entry.plugin.save_config().unwrap_or_default();
+            cfg.set("enabled", entry.enabled);
+            ConfigFile::save_plugin(path, entry.plugin.id(), &cfg)?;
         }
         if self.config_path.borrow().as_deref() == Some(path) {
             self.last_modified
                 .set(std::fs::metadata(path).and_then(|m| m.modified()).ok());
         }
         Ok(())
+    }
+
+    /// Guarda todos los plugins en la ruta por defecto configurada (`~/.config/port/config.md`).
+    pub fn save_all_to_default_file(&self) -> std::io::Result<()> {
+        let path = ConfigFile::default_path();
+        self.save_all_configs(&path)
     }
 }
