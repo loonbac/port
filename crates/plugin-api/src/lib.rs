@@ -6,8 +6,10 @@
 
 pub mod config;
 
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use gpui::AnyElement;
 use port_term_core::frame::Rgb;
@@ -37,7 +39,7 @@ pub trait AppearanceHook {
     }
 
     /// Nombre de la familia de fuente preferida (ej. "JetBrainsMono Nerd Font Mono").
-    fn font_family(&self) -> Option<&'static str> {
+    fn font_family(&self) -> Option<String> {
         None
     }
 
@@ -127,6 +129,8 @@ pub trait Plugin: 'static {
 #[derive(Default)]
 pub struct PluginRegistry {
     plugins: Vec<Box<dyn Plugin>>,
+    config_path: RefCell<Option<PathBuf>>,
+    last_modified: Cell<Option<SystemTime>>,
 }
 
 impl PluginRegistry {
@@ -134,6 +138,8 @@ impl PluginRegistry {
     pub fn new() -> Self {
         Self {
             plugins: Vec::new(),
+            config_path: RefCell::new(None),
+            last_modified: Cell::new(None),
         }
     }
 
@@ -183,7 +189,7 @@ impl PluginRegistry {
     }
 
     /// Obtiene la familia de fuente configurada por los plugins, o el valor por defecto.
-    pub fn effective_font_family(&self, default: &'static str) -> &'static str {
+    pub fn effective_font_family(&self, default: &str) -> String {
         for plugin in &self.plugins {
             if let Some(hook) = plugin.appearance_hook() {
                 if let Some(family) = hook.font_family() {
@@ -191,7 +197,7 @@ impl PluginRegistry {
                 }
             }
         }
-        default
+        default.to_string()
     }
 
     /// Obtiene el tamaño de fuente configurado por los plugins, o el valor por defecto.
@@ -311,7 +317,40 @@ impl PluginRegistry {
         let defaults = self.default_configs();
         let configs = ConfigFile::load_or_create(path, &defaults)?;
         self.load_configs(&configs);
+        *self.config_path.borrow_mut() = Some(path.to_path_buf());
+        self.last_modified
+            .set(std::fs::metadata(path).and_then(|m| m.modified()).ok());
         Ok(())
+    }
+
+    /// Comprueba si el archivo de configuración fue modificado en disco desde la última
+    /// lectura. Si cambió, recarga las configuraciones de los plugins y devuelve `Ok(true)`.
+    pub fn reload_if_modified(&self) -> std::io::Result<bool> {
+        let path = match self.config_path.borrow().as_ref() {
+            Some(p) => p.clone(),
+            None => return Ok(false),
+        };
+
+        let metadata = match std::fs::metadata(&path) {
+            Ok(m) => m,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(e) => return Err(e),
+        };
+
+        let current_mtime = match metadata.modified() {
+            Ok(t) => t,
+            Err(_) => return Ok(false),
+        };
+
+        if self.last_modified.get() == Some(current_mtime) {
+            return Ok(false);
+        }
+
+        let content = std::fs::read_to_string(&path)?;
+        let configs = ConfigFile::parse(&content);
+        self.load_configs(&configs);
+        self.last_modified.set(Some(current_mtime));
+        Ok(true)
     }
 
     /// Guarda la configuración actual de un plugin específico en el archivo.
@@ -320,6 +359,10 @@ impl PluginRegistry {
             if plugin.id() == plugin_id {
                 if let Some(cfg) = plugin.save_config() {
                     ConfigFile::save_plugin(path, plugin_id, &cfg)?;
+                    if self.config_path.borrow().as_deref() == Some(path) {
+                        self.last_modified
+                            .set(std::fs::metadata(path).and_then(|m| m.modified()).ok());
+                    }
                     return Ok(true);
                 }
             }
@@ -333,6 +376,10 @@ impl PluginRegistry {
             if let Some(cfg) = plugin.save_config() {
                 ConfigFile::save_plugin(path, plugin.id(), &cfg)?;
             }
+        }
+        if self.config_path.borrow().as_deref() == Some(path) {
+            self.last_modified
+                .set(std::fs::metadata(path).and_then(|m| m.modified()).ok());
         }
         Ok(())
     }

@@ -117,7 +117,7 @@ impl Render for TerminalView {
                         &frame,
                         &metrics,
                         effective_bg,
-                        font_family,
+                        &font_family,
                         font_size,
                         &font_fallbacks,
                         window,

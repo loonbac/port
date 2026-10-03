@@ -38,8 +38,8 @@ struct MockFontPlugin {
 }
 
 impl AppearanceHook for MockFontPlugin {
-    fn font_family(&self) -> Option<&'static str> {
-        Some(self.family)
+    fn font_family(&self) -> Option<String> {
+        Some(self.family.to_string())
     }
 
     fn font_size(&self) -> Option<f32> {
@@ -289,6 +289,39 @@ fn registry_creates_and_loads_configuration_file() {
 
     let updated_text = std::fs::read_to_string(&path).unwrap();
     assert!(updated_text.contains("```font-zoom\ndefault_size = 28\n```"));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn registry_reloads_config_in_real_time_when_modified() {
+    let dir = std::env::temp_dir().join(format!("port-test-hotreload-{}", std::process::id()));
+    let path = dir.join("config.md");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let font_size = Arc::new(AtomicUsize::new(0));
+    let mut registry = PluginRegistry::new();
+    registry.register(MockConfigurablePlugin {
+        font_size: Arc::clone(&font_size),
+    });
+
+    registry.load_or_create_config(&path).unwrap();
+    assert_eq!(font_size.load(Ordering::SeqCst), 14);
+
+    // Comprobación inicial: no ha habido modificaciones
+    assert_eq!(registry.reload_if_modified().unwrap(), false);
+
+    // Modificamos el archivo externamente
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    let content = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(&path, content.replace("default_size = 14", "default_size = 24")).unwrap();
+
+    // Ahora reload_if_modified detecta el cambio y actualiza el plugin en caliente
+    assert_eq!(registry.reload_if_modified().unwrap(), true);
+    assert_eq!(font_size.load(Ordering::SeqCst), 24);
+
+    // Comprobación posterior: ya está sincronizado
+    assert_eq!(registry.reload_if_modified().unwrap(), false);
 
     let _ = std::fs::remove_dir_all(&dir);
 }

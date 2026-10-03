@@ -109,17 +109,36 @@ fn main() {
         // Latido reactivo: solo redibuja la ventana cuando el PTY realmente tiene
         // datos nuevos. Si el shell está quieto, el uso de CPU cae a cero.
         let session_for_poller = Rc::clone(&session);
+        let window_for_poller = window.clone();
         cx.spawn(async move |cx| {
             loop {
                 cx.background_executor().timer(Duration::from_millis(16)).await;
                 let changed = session_for_poller.borrow_mut().pump();
                 if changed {
-                    window.update(cx, |_, window, _cx| window.refresh()).ok();
+                    window_for_poller.update(cx, |_, window, _cx| window.refresh()).ok();
+                }
+            }
+        })
+        .detach();
+
+        // Vigila el archivo de configuración y lo recarga en tiempo real ante cualquier cambio en disco.
+        let plugins_for_watcher = Rc::clone(&plugins);
+        let window_for_watcher = window.clone();
+        cx.spawn(async move |cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_millis(150)).await;
+                let reloaded = plugins_for_watcher
+                    .borrow()
+                    .reload_if_modified()
+                    .unwrap_or(false);
+                if reloaded {
+                    window_for_watcher.update(cx, |_, window, _cx| window.refresh()).ok();
                 }
             }
         })
         .detach();
 
         cx.activate(true);
+
     });
 }
