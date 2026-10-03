@@ -13,6 +13,8 @@ use std::time::Duration;
 
 use gpui::prelude::*;
 use gpui::{App, Application, Bounds, WindowBounds, WindowOptions, px, size};
+use port_plugin_api::{KeyAction, PluginRegistry};
+use port_plugin_transparency::TransparencyPlugin;
 use port_term_core::pty::PtyConfig;
 use port_term_core::session::Session;
 
@@ -37,11 +39,22 @@ fn main() {
                 .expect("no se pudo arrancar el shell"),
         ));
 
-        // En una terminal cada tecla le pertenece al PTY: se capturan todas a
-        // nivel de ventana, sin depender del foco interno de ningún elemento.
+        let mut plugin_registry = PluginRegistry::new();
+        plugin_registry.register(TransparencyPlugin::default());
+        let plugins = Rc::new(RefCell::new(plugin_registry));
+
+        // En una terminal cada tecla le pertenece al PTY, salvo que un plugin
+        // registrado decida consumirla primero.
         let session_for_keys = Rc::clone(&session);
+        let plugins_for_keys = Rc::clone(&plugins);
         cx.intercept_keystrokes(move |ev, window, _cx| {
             if let Some(key) = keys::to_core_key(&ev.keystroke) {
+                // Si un plugin consume la tecla (ej. atajo de tab o sidebar),
+                // no se envía al PTY.
+                if plugins_for_keys.borrow().dispatch_key(&key) == KeyAction::Consume {
+                    window.refresh();
+                    return;
+                }
                 let mut session = session_for_keys.borrow_mut();
                 let mode = session.cursor_key_mode();
                 if let Some(bytes) = port_term_core::input::encode(&key, mode) {
@@ -54,6 +67,7 @@ fn main() {
 
         let session_for_view = Rc::clone(&session);
         let metrics_for_view = metrics.clone();
+        let plugins_for_view = Rc::clone(&plugins);
 
         let window = cx
             .open_window(
@@ -65,15 +79,18 @@ fn main() {
                 move |_, cx| {
                     let focus_handle = cx.focus_handle();
                     cx.new(|_| {
-                        TerminalView::new(session_for_view, metrics_for_view, focus_handle)
+                        TerminalView::new(
+                            session_for_view,
+                            metrics_for_view,
+                            focus_handle,
+                            plugins_for_view,
+                        )
                     })
                 },
             )
             .expect("no se pudo abrir la ventana");
 
-        // Latido: sin esto la ventana se dibuja una sola vez y se congela.
-        // En Wayland un redibujado hay que pedirlo al compositor, y `notify`
-        // por sí solo no lo consigue: hay que marcar la ventana como sucia.
+        // Latido: mantiene la ventana al día ante eventos del PTY y compositor.
         cx.spawn(async move |cx| {
             loop {
                 cx.background_executor().timer(Duration::from_millis(16)).await;

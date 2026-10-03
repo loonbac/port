@@ -3861,7 +3861,24 @@ name = "port"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "port-plugin-api",
+ "port-plugin-transparency",
  "port-term-core",
+]
+
+[[package]]
+name = "port-plugin-api"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "port-term-core",
+]
+
+[[package]]
+name = "port-plugin-transparency"
+version = "0.1.0"
+dependencies = [
+ "port-plugin-api",
 ]
 
 [[package]]

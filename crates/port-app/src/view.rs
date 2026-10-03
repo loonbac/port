@@ -15,6 +15,7 @@ use gpui::{
     App, Bounds, Context, FocusHandle, Font, FontStyle, FontWeight, MouseButton, Render, TextRun,
     Window, canvas, div, fill, point, px, rgb, size,
 };
+use port_plugin_api::PluginRegistry;
 use port_term_core::frame::{Frame, Rgb, Run, Style};
 use port_term_core::session::Session;
 
@@ -25,16 +26,23 @@ pub struct TerminalView {
     metrics: Metrics,
     background: Rgb,
     focus_handle: FocusHandle,
+    plugins: Rc<RefCell<PluginRegistry>>,
 }
 
 impl TerminalView {
-    pub fn new(session: Rc<RefCell<Session>>, metrics: Metrics, focus_handle: FocusHandle) -> Self {
+    pub fn new(
+        session: Rc<RefCell<Session>>,
+        metrics: Metrics,
+        focus_handle: FocusHandle,
+        plugins: Rc<RefCell<PluginRegistry>>,
+    ) -> Self {
         let background = session.borrow().default_style().bg;
         Self {
             session,
             metrics,
             background,
             focus_handle,
+            plugins,
         }
     }
 }
@@ -59,35 +67,65 @@ impl Render for TerminalView {
 
         let frame = self.session.borrow().frame();
         let metrics = self.metrics.clone();
-        let background = self.background;
         let focus = self.focus_handle.clone();
 
-        div()
+        let plugins = self.plugins.borrow();
+        let effective_bg = plugins.effective_background(self.background);
+        let opacity = plugins.effective_opacity();
+        let root_bg = color(effective_bg).opacity(opacity);
+
+        let top_bars = plugins.top_bars();
+        let left_sidebars = plugins.left_sidebars();
+        let bottom_bars = plugins.bottom_bars();
+
+        let mut root = div()
             .flex()
             .flex_col()
             .size_full()
-            .bg(color(background))
+            .bg(root_bg)
             .track_focus(&self.focus_handle)
             // Clic en cualquier parte devuelve el foco a la rejilla.
             .on_mouse_down(MouseButton::Left, move |_event, window, _cx| {
                 focus.focus(window);
-            })
-            // El canvas no deduce su tamaño: sin esto se pinta sobre una caja
-            // de altura cero y no aparece nada en pantalla.
-            .child(
-                canvas(
-                    move |_bounds, _window, _cx| (),
-                    move |_bounds, (), window, cx| {
-                        paint_frame(&frame, &metrics, window, cx);
-                    },
-                )
-                .size_full(),
+            });
+
+        for bar in top_bars {
+            root = root.child(bar);
+        }
+
+        let mut center = div().flex().flex_row().flex_1();
+        for sidebar in left_sidebars {
+            center = center.child(sidebar);
+        }
+
+        center = center.child(
+            canvas(
+                move |_bounds, _window, _cx| (),
+                move |_bounds, (), window, cx| {
+                    paint_frame(&frame, &metrics, effective_bg, window, cx);
+                },
             )
+            .size_full(),
+        );
+
+        root = root.child(center);
+
+        for bar in bottom_bars {
+            root = root.child(bar);
+        }
+
+        root
     }
 }
 
 /// Pinta el cuadro completo: un quad de fondo por celda y el texto encima.
-fn paint_frame(frame: &Frame, metrics: &Metrics, window: &mut Window, cx: &mut App) {
+fn paint_frame(
+    frame: &Frame,
+    metrics: &Metrics,
+    default_bg: Rgb,
+    window: &mut Window,
+    cx: &mut App,
+) {
     let padding = px(metrics.padding);
     let cell_width = px(metrics.cell_width);
     let cell_height = px(metrics.cell_height);
@@ -123,14 +161,16 @@ fn paint_frame(frame: &Frame, metrics: &Metrics, window: &mut Window, cx: &mut A
                 .is_some_and(|cursor| cursor.row == row_index && cursor.run_index == run_index);
             let style = style_of(run, is_cursor);
             let left = padding + cell_width * run_offset(&row.runs, run_index);
-
-            // El fondo ocupa exactamente las columnas del run: así una celda con
-            // color de fondo pinta su rectángulo aunque el glifo sea un espacio.
             let width = cell_width * run.columns as f32;
-            window.paint_quad(fill(
-                Bounds::new(point(left, top), size(width, cell_height)),
-                color(style.bg),
-            ));
+
+            // Si el color coincide con el fondo por defecto y no es el cursor,
+            // dejamos que se vea el fondo del contenedor principal (con su opacidad).
+            if style.bg != default_bg || is_cursor {
+                window.paint_quad(fill(
+                    Bounds::new(point(left, top), size(width, cell_height)),
+                    color(style.bg),
+                ));
+            }
 
             if run.text.trim().is_empty() {
                 continue;

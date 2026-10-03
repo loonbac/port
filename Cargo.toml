@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/term-core", "crates/port-app"]
+members = ["crates/term-core", "crates/plugin-api", "crates/port-app"]
 
 [workspace.package]
 edition = "2021"
@@ -12,6 +12,16 @@ license = "MIT"
 gpui = "=0.2.2"
 alacritty_terminal = "0.26"
 portable-pty = "0.9"
+port-term-core = { path = "crates/term-core" }
+port-plugin-api = { path = "crates/plugin-api" }
+port-plugin-transparency = { git = "https://github.com/loonbac/port-plugins.git" }
+
+[patch."https://github.com/loonbac/port-plugins.git"]
+port-plugin-transparency = { path = "../port-plugins/plugins/transparency" }
+
+[patch."https://github.com/loonbac/port.git"]
+port-term-core = { path = "crates/term-core" }
+port-plugin-api = { path = "crates/plugin-api" }
 
 [profile.release]
 opt-level = 3
