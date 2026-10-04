@@ -78,6 +78,14 @@ jobs:
 
     container: ${{ matrix.container }}
 
+    # En un job con contenedor, GitHub ejecuta los pasos con `sh`, que en Debian
+    # es dash. dash no conoce `pipefail`, asi que un `set -euo pipefail` aborta
+    # el paso con "Illegal option". Se declara bash de forma explicita y no se
+    # deja que cada paso adivine con que shell corre.
+    defaults:
+      run:
+        shell: bash
+
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
