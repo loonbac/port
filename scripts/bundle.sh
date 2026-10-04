@@ -59,8 +59,12 @@ REQUIRED_LIBS=(
 # Dependencias transitivas que las anteriores arrastran consigo. Sin ellas,
 # `ldd` las encuentra en el sistema y el bundle no es portable de verdad.
 BUNDLED_EXTRA_LIBS=(
-  libxau.so.6
-  libxdmcp.so.6
+  # OJO con las mayusculas: son `libXau` y `libXdmcp`. Escribidas en minuscula
+  # no se encontraban, el script las daba por "opcionales" y las omitia, y el
+  # bundle no arrancaba en ninguna distro con el error
+  # "error while loading shared libraries: libXau.so.6".
+  libXau.so.6
+  libXdmcp.so.6
   libbsd.so.0
   libmd.so.0
   libffi.so.8
@@ -147,8 +151,12 @@ main() {
   for name in "${BUNDLED_EXTRA_LIBS[@]}"; do
     if src="$(find_lib "$name")"; then
       cp -L "$src" "$BUNDLE/lib/$name"
+      echo "    $name"
     else
-      echo "    (opcional) $name no encontrada, se omite"
+      # Antes esto se omitia en silencio. El resultado era un bundle que se
+      # construia, pasaba todas las comprobaciones y no arrancaba: estructura
+      # correcta, ejecucion rota. Fallar aqui es lo que evita repetir eso.
+      die "falta la dependencia transitiva $name; el bundle no arrancaria sin ella"
     fi
   done
 
@@ -222,6 +230,20 @@ main() {
     fi
   done
   [ "$missing" -eq 0 ] || die "el bundle no resuelve las librerias criticas"
+
+  # Comprobacion final: el bundle arranca DE VERDAD. Todas las anteriores
+  # miran la estructura; esta la ejecuta. Un bundle con una dependencia
+  # transitiva que falte se ve perfecto aqui y revienta al arrancar.
+  echo "==> Comprobando que el bundle arranca"
+  if command -v patchelf >/dev/null 2>&1; then
+    local salida
+    if salida="$(LD_LIBRARY_PATH= "$BUNDLE/bin/$BIN" --help 2>&1)"; then
+      echo "$salida" | head -3
+    else
+      echo "$salida" | head -5 >&2
+      die "el bundle se construye bien pero no arranca"
+    fi
+  fi
 
   cat > "$BUNDLE/share/applications/$BIN.desktop" <<DESKTOP
 [Desktop Entry]
