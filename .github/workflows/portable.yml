@@ -145,10 +145,10 @@ jobs:
       - name: Ejecutar el bundle en ${{ matrix.distro }}
         env:
           IMAGE_TEST: >-
-            ${{ matrix.distro == 'debian-12' && 'debian:12-slim'
-            || matrix.distro == 'ubuntu-22.04' && 'ubuntu:22.04'
-            || matrix.distro == 'fedora-40' && 'fedora:40'
-            || 'archlinux:latest' }}
+            ${{ matrix.distro == 'debian-12' && 'docker.io/library/debian:12-slim'
+            || matrix.distro == 'ubuntu-22.04' && 'docker.io/library/ubuntu:22.04'
+            || matrix.distro == 'fedora-40' && 'docker.io/library/fedora:40'
+            || 'docker.io/library/archlinux:latest' }}
         run: |
           set -euo pipefail
           BUNDLE="$(echo dist/port-*-linux-x86_64)"

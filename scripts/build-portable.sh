@@ -26,7 +26,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/version.sh"
 VERSION="$PORT_VERSION"
 # Debian 12 trae glibc 2.36, que es el suelo razonable: Ubuntu 22.04, Fedora 36
 # yRHEL/Rocky 9.3 arrancan con el mismo binario.
-IMAGE="debian:12-slim"
+# Nombre completamente cualificado. `debian:12-slim` a secas no lo resuelven
+# ni docker ni podman en un entorno limpio: docker lo acepta por costumbre,
+# podman exige el registro explicito y falla con "short-name did not resolve".
+# Con el nombre completo funciona en los dos motores.
+IMAGE="docker.io/library/debian:12-slim"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -142,7 +146,7 @@ main() {
   if have_docker; then
     build_with_docker docker
   elif have_podman; then
-    build_with_podman podman
+    build_with_docker podman
   else
     echo "AVISO: no hay docker ni podman; se compila de forma nativa." >&2
     echo "       El binario solo sera portable si tu glibc es reciente." >&2
