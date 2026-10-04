@@ -8,7 +8,7 @@
 
 use gpui::prelude::*;
 use gpui::{anchored, deferred, div, point, px, rgb, AnyElement, FontWeight, IntoElement};
-use port_plugin_api::PluginInfo;
+use port_plugin_api::{PluginHealth, PluginInfo};
 use port_term_core::input::Key;
 
 /// Atajo que alterna la visibilidad del menú.
@@ -376,6 +376,7 @@ fn render_browsing(
             p.id.clone(),
             p.version.clone(),
             p.enabled,
+            p.health,
             false,
             is_selected,
         ));
@@ -390,6 +391,7 @@ fn render_browsing(
             p.id.clone(),
             p.version.clone(),
             p.enabled && p.running,
+            PluginHealth::Ok,
             true,
             is_selected,
         ));
@@ -475,13 +477,25 @@ fn render_plugin_row(
     id: String,
     version: String,
     enabled: bool,
+    health: PluginHealth,
     is_external: bool,
     is_selected: bool,
 ) -> impl IntoElement {
-    let (status_text, dot_color, badge_bg, badge_border) = if enabled {
-        ("ACTIVE", rgb(0x3fb950), rgb(0x0e2717), rgb(0x238636))
-    } else {
-        ("OFF", rgb(0x8b949e), rgb(0x161b22), rgb(0x30363d))
+    let (status_text, dot_color, badge_bg, badge_border) = match health {
+        PluginHealth::Disabled => (
+            "DISABLED (SLOW)",
+            rgb(0xf85149),
+            rgb(0x270e0e),
+            rgb(0x862323),
+        ),
+        PluginHealth::Slow if enabled => ("SLOW", rgb(0xd29922), rgb(0x2b1d09), rgb(0x6e4a06)),
+        _ => {
+            if enabled {
+                ("ACTIVE", rgb(0x3fb950), rgb(0x0e2717), rgb(0x238636))
+            } else {
+                ("OFF", rgb(0x8b949e), rgb(0x161b22), rgb(0x30363d))
+            }
+        }
     };
 
     let row_bg = if is_selected {
@@ -691,6 +705,7 @@ fn render_installing(
             p.id.clone(),
             p.version.clone(),
             p.enabled,
+            p.health,
             false,
             is_selected,
         ));
@@ -704,6 +719,7 @@ fn render_installing(
             p.id.clone(),
             p.version.clone(),
             p.enabled && p.running,
+            PluginHealth::Ok,
             true,
             is_selected,
         ));

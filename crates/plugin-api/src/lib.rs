@@ -15,7 +15,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 use gpui::AnyElement;
 use port_term_core::frame::Rgb;
@@ -124,6 +124,21 @@ impl Services {
     }
 }
 
+/// Presupuesto de tiempo que un hook puede gastar antes de contar como lento.
+pub const DEFAULT_HOOK_BUDGET: Duration = Duration::from_millis(50);
+
+/// Estado de salud de un plugin frente al presupuesto de hook.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PluginHealth {
+    /// Todos sus hooks responden dentro del presupuesto.
+    #[default]
+    Ok,
+    /// Se pasó del presupuesto una vez. Sigue invocándose, con aviso.
+    Slow,
+    /// Se pasó del presupuesto dos veces. Ya no se invoca nunca más.
+    Disabled,
+}
+
 /// Información básica y estado de un plugin registrado.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginInfo {
@@ -131,6 +146,7 @@ pub struct PluginInfo {
     pub name: String,
     pub version: String,
     pub enabled: bool,
+    pub health: PluginHealth,
 }
 
 /// Acción resultante tras procesar una pulsación en un hook de entrada.
@@ -353,15 +369,72 @@ pub trait Plugin: 'static {
 struct RegisteredPlugin {
     plugin: Box<dyn Plugin>,
     enabled: bool,
+    health: Cell<PluginHealth>,
+}
+
+impl RegisteredPlugin {
+    /// Ejecuta una llamada a un hook de plugin aislando pánicos y midiendo el tiempo de ejecución.
+    ///
+    /// Aplica la política de watchdog con dos strikes:
+    /// - Primer strike: `Ok` pasa a `Slow`, se emite aviso a stderr y el resultado de la llamada se usa.
+    /// - Segundo strike: `Slow` pasa a `Disabled`, se emite aviso a stderr y el resultado de la llamada se usa.
+    /// - En `Disabled`: el plugin no se vuelve a invocar nunca más y se devuelve el valor de respaldo (`fallback`).
+    fn invoke_hook<T>(&self, budget: Duration, fallback: T, call: impl FnOnce() -> T) -> T {
+        if !self.enabled || self.health.get() == PluginHealth::Disabled {
+            return fallback;
+        }
+
+        let start = Instant::now();
+        let res = guarded(fallback, call);
+        let elapsed = start.elapsed();
+
+        if elapsed > budget {
+            match self.health.get() {
+                PluginHealth::Ok => {
+                    self.health.set(PluginHealth::Slow);
+                    eprintln!(
+                        "aviso: el plugin '{}' tardó {:?} (presupuesto {:?}) y pasa a estado Slow",
+                        self.plugin.id(),
+                        elapsed,
+                        budget
+                    );
+                }
+                PluginHealth::Slow => {
+                    self.health.set(PluginHealth::Disabled);
+                    eprintln!(
+                        "aviso: el plugin '{}' superó el presupuesto por segunda vez ({:?} > {:?}) y ha sido deshabilitado",
+                        self.plugin.id(),
+                        elapsed,
+                        budget
+                    );
+                }
+                PluginHealth::Disabled => {}
+            }
+        }
+
+        res
+    }
 }
 
 /// Registro central de plugins activos de la terminal.
-#[derive(Default)]
 pub struct PluginRegistry {
     plugins: Vec<RegisteredPlugin>,
+    hook_budget: Duration,
     config_path: RefCell<Option<PathBuf>>,
     last_modified: Cell<Option<SystemTime>>,
     services: Arc<Services>,
+}
+
+impl Default for PluginRegistry {
+    fn default() -> Self {
+        Self {
+            plugins: Vec::new(),
+            hook_budget: DEFAULT_HOOK_BUDGET,
+            config_path: RefCell::new(None),
+            last_modified: Cell::new(None),
+            services: Arc::new(Services::new()),
+        }
+    }
 }
 
 /// Ejecuta un hook de plugin aislando su pánico.
@@ -386,14 +459,27 @@ fn guarded<T>(fallback: T, call: impl FnOnce() -> T) -> T {
 }
 
 impl PluginRegistry {
-    /// Crea un registro de plugins vacío.
+    /// Crea un registro de plugins vacío con el presupuesto de hook por defecto.
     pub fn new() -> Self {
-        Self {
-            plugins: Vec::new(),
-            config_path: RefCell::new(None),
-            last_modified: Cell::new(None),
-            services: Arc::new(Services::new()),
-        }
+        Self::default()
+    }
+
+    /// Presupuesto de tiempo asignado a cada invocación de hook.
+    pub fn hook_budget(&self) -> Duration {
+        self.hook_budget
+    }
+
+    /// Configura el presupuesto de tiempo asignado a cada invocación de hook.
+    pub fn set_hook_budget(&mut self, budget: Duration) {
+        self.hook_budget = budget;
+    }
+
+    /// Consulta el estado de salud de un plugin por su identificador.
+    pub fn plugin_health(&self, id: &str) -> Option<PluginHealth> {
+        self.plugins
+            .iter()
+            .find(|p| p.plugin.id() == id)
+            .map(|p| p.health.get())
     }
 
     /// Directorio de servicios, para pasarlo a plugins que llaman a otros.
@@ -407,6 +493,7 @@ impl PluginRegistry {
         self.plugins.push(RegisteredPlugin {
             plugin: Box::new(plugin),
             enabled: true,
+            health: Cell::new(PluginHealth::Ok),
         });
     }
 
@@ -416,6 +503,7 @@ impl PluginRegistry {
         self.plugins.push(RegisteredPlugin {
             plugin,
             enabled: true,
+            health: Cell::new(PluginHealth::Ok),
         });
     }
 
@@ -440,13 +528,16 @@ impl PluginRegistry {
         self.plugins
             .iter()
             .find(|p| p.plugin.id() == id)
-            .map(|p| p.enabled)
+            .map(|p| p.enabled && p.health.get() != PluginHealth::Disabled)
             .unwrap_or(false)
     }
 
     /// Habilita o deshabilita un plugin por su identificador.
     pub fn set_enabled(&mut self, id: &str, enabled: bool) -> bool {
         if let Some(entry) = self.plugins.iter_mut().find(|p| p.plugin.id() == id) {
+            if entry.health.get() == PluginHealth::Disabled {
+                return false;
+            }
             entry.enabled = enabled;
             true
         } else {
@@ -457,6 +548,9 @@ impl PluginRegistry {
     /// Alterna el estado activo/inactivo de un plugin por su identificador.
     pub fn toggle_enabled(&mut self, id: &str) -> Option<bool> {
         let entry = self.plugins.iter_mut().find(|p| p.plugin.id() == id)?;
+        if entry.health.get() == PluginHealth::Disabled {
+            return None;
+        }
         entry.enabled = !entry.enabled;
         Some(entry.enabled)
     }
@@ -464,6 +558,9 @@ impl PluginRegistry {
     /// Alterna el estado activo/inactivo por índice de posición.
     pub fn toggle_enabled_at(&mut self, index: usize) -> Option<bool> {
         let entry = self.plugins.get_mut(index)?;
+        if entry.health.get() == PluginHealth::Disabled {
+            return None;
+        }
         entry.enabled = !entry.enabled;
         Some(entry.enabled)
     }
@@ -477,6 +574,7 @@ impl PluginRegistry {
                 name: entry.plugin.name().to_string(),
                 version: entry.plugin.version().to_string(),
                 enabled: entry.enabled,
+                health: entry.health.get(),
             })
             .collect()
     }
@@ -487,13 +585,10 @@ impl PluginRegistry {
     pub fn effective_opacity(&self) -> f32 {
         let mut min_opacity = 1.0f32;
         for entry in &self.plugins {
-            if !entry.enabled {
-                continue;
-            }
-            if let Some(hook) = entry.plugin.appearance_hook() {
-                if let Some(op) = guarded(None, || hook.opacity()) {
-                    min_opacity = min_opacity.min(op.clamp(0.0, 1.0));
-                }
+            if let Some(op) = entry.invoke_hook(self.hook_budget, None, || {
+                entry.plugin.appearance_hook().and_then(|h| h.opacity())
+            }) {
+                min_opacity = min_opacity.min(op.clamp(0.0, 1.0));
             }
         }
         min_opacity
@@ -502,12 +597,12 @@ impl PluginRegistry {
     /// Calcula el color de fondo efectivo aplicando los tintes de los plugins activos en orden.
     pub fn effective_background(&self, mut base: Rgb) -> Rgb {
         for entry in &self.plugins {
-            if !entry.enabled {
-                continue;
-            }
-            if let Some(hook) = entry.plugin.appearance_hook() {
-                base = guarded(base, || hook.background_tint(base));
-            }
+            base = entry.invoke_hook(self.hook_budget, base, || {
+                match entry.plugin.appearance_hook() {
+                    Some(hook) => hook.background_tint(base),
+                    None => base,
+                }
+            });
         }
         base
     }
@@ -515,13 +610,10 @@ impl PluginRegistry {
     /// Obtiene la familia de fuente configurada por los plugins activos, o el valor por defecto.
     pub fn effective_font_family(&self, default: &str) -> String {
         for entry in &self.plugins {
-            if !entry.enabled {
-                continue;
-            }
-            if let Some(hook) = entry.plugin.appearance_hook() {
-                if let Some(family) = guarded(None, || hook.font_family()) {
-                    return family;
-                }
+            if let Some(family) = entry.invoke_hook(self.hook_budget, None, || {
+                entry.plugin.appearance_hook().and_then(|h| h.font_family())
+            }) {
+                return family;
             }
         }
         default.to_string()
@@ -530,13 +622,10 @@ impl PluginRegistry {
     /// Obtiene el tamaño de fuente configurado por los plugins activos, o el valor por defecto.
     pub fn effective_font_size(&self, default: f32) -> f32 {
         for entry in &self.plugins {
-            if !entry.enabled {
-                continue;
-            }
-            if let Some(hook) = entry.plugin.appearance_hook() {
-                if let Some(size) = guarded(None, || hook.font_size()) {
-                    return size;
-                }
+            if let Some(size) = entry.invoke_hook(self.hook_budget, None, || {
+                entry.plugin.appearance_hook().and_then(|h| h.font_size())
+            }) {
+                return size;
             }
         }
         default
@@ -546,13 +635,13 @@ impl PluginRegistry {
     pub fn effective_font_fallbacks(&self) -> Vec<String> {
         let mut fallbacks = Vec::new();
         for entry in &self.plugins {
-            if !entry.enabled {
-                continue;
-            }
-            if let Some(hook) = entry.plugin.appearance_hook() {
-                if let Some(fbs) = guarded(None, || hook.font_fallbacks()) {
-                    fallbacks.extend(fbs);
-                }
+            if let Some(fbs) = entry.invoke_hook(self.hook_budget, None, || {
+                entry
+                    .plugin
+                    .appearance_hook()
+                    .and_then(|h| h.font_fallbacks())
+            }) {
+                fallbacks.extend(fbs);
             }
         }
         if fallbacks.is_empty() {
@@ -568,13 +657,15 @@ impl PluginRegistry {
     /// Despacha una tecla a través de los hooks de entrada de los plugins activos.
     pub fn dispatch_key(&self, key: &Key) -> KeyAction {
         for entry in &self.plugins {
-            if !entry.enabled {
-                continue;
-            }
-            if let Some(hook) = entry.plugin.input_hook() {
-                if guarded(KeyAction::Pass, || hook.on_key(key)) == KeyAction::Consume {
-                    return KeyAction::Consume;
-                }
+            let action = entry.invoke_hook(self.hook_budget, KeyAction::Pass, || {
+                entry
+                    .plugin
+                    .input_hook()
+                    .map(|h| h.on_key(key))
+                    .unwrap_or(KeyAction::Pass)
+            });
+            if action == KeyAction::Consume {
+                return KeyAction::Consume;
             }
         }
         KeyAction::Pass
@@ -582,50 +673,66 @@ impl PluginRegistry {
 
     /// Altura acumulada de las barras superiores activas.
     pub fn top_bar_height(&self) -> f32 {
-        self.plugins
-            .iter()
-            .filter(|p| p.enabled)
-            .filter_map(|p| {
-                p.plugin
+        let mut max_h = 0.0f32;
+        for entry in &self.plugins {
+            let h = entry.invoke_hook(self.hook_budget, 0.0, || {
+                entry
+                    .plugin
                     .layout_hook()
-                    .map(|h| guarded(0.0, || h.top_bar_height()))
-            })
-            .fold(0.0f32, f32::max)
+                    .map(|h| h.top_bar_height())
+                    .unwrap_or(0.0)
+            });
+            max_h = max_h.max(h);
+        }
+        max_h
     }
 
     /// Ancho acumulado de las barras laterales izquierdas activas.
     pub fn left_sidebar_width(&self) -> f32 {
-        self.plugins
-            .iter()
-            .filter(|p| p.enabled)
-            .filter_map(|p| {
-                p.plugin
+        let mut max_w = 0.0f32;
+        for entry in &self.plugins {
+            let w = entry.invoke_hook(self.hook_budget, 0.0, || {
+                entry
+                    .plugin
                     .layout_hook()
-                    .map(|h| guarded(0.0, || h.left_sidebar_width()))
-            })
-            .fold(0.0f32, f32::max)
+                    .map(|h| h.left_sidebar_width())
+                    .unwrap_or(0.0)
+            });
+            max_w = max_w.max(w);
+        }
+        max_w
     }
 
     /// Altura acumulada de las barras inferiores activas.
     pub fn bottom_bar_height(&self) -> f32 {
-        self.plugins
-            .iter()
-            .filter(|p| p.enabled)
-            .filter_map(|p| {
-                p.plugin
+        let mut max_h = 0.0f32;
+        for entry in &self.plugins {
+            let h = entry.invoke_hook(self.hook_budget, 0.0, || {
+                entry
+                    .plugin
                     .layout_hook()
-                    .map(|h| guarded(0.0, || h.bottom_bar_height()))
-            })
-            .fold(0.0f32, f32::max)
+                    .map(|h| h.bottom_bar_height())
+                    .unwrap_or(0.0)
+            });
+            max_h = max_h.max(h);
+        }
+        max_h
     }
 
     /// Identificador de la sesión activa que debe mostrarse y recibir teclado.
     pub fn active_session_id(&self) -> usize {
         for entry in &self.plugins {
-            if entry.enabled {
-                if let Some(hook) = entry.plugin.space_hook() {
-                    return guarded(0, || hook.active_session());
-                }
+            if !entry.enabled || entry.health.get() == PluginHealth::Disabled {
+                continue;
+            }
+            if entry.plugin.space_hook().is_some() {
+                return entry.invoke_hook(self.hook_budget, 0, || {
+                    entry
+                        .plugin
+                        .space_hook()
+                        .map(|h| h.active_session())
+                        .unwrap_or(0)
+                });
             }
         }
         0
@@ -634,10 +741,17 @@ impl PluginRegistry {
     /// Índice del espacio activo según los plugins registrados.
     pub fn active_space_index(&self) -> usize {
         for entry in &self.plugins {
-            if entry.enabled {
-                if let Some(hook) = entry.plugin.space_hook() {
-                    return guarded(0, || hook.active_space());
-                }
+            if !entry.enabled || entry.health.get() == PluginHealth::Disabled {
+                continue;
+            }
+            if entry.plugin.space_hook().is_some() {
+                return entry.invoke_hook(self.hook_budget, 0, || {
+                    entry
+                        .plugin
+                        .space_hook()
+                        .map(|h| h.active_space())
+                        .unwrap_or(0)
+                });
             }
         }
         0
@@ -646,12 +760,15 @@ impl PluginRegistry {
     /// Comprueba si algún plugin activo solicita crear una nueva sesión de shell/espacio/pestaña.
     pub fn take_new_session_request(&self) -> bool {
         for entry in &self.plugins {
-            if entry.enabled {
-                if let Some(hook) = entry.plugin.space_hook() {
-                    if guarded(false, || hook.take_new_session_request()) {
-                        return true;
-                    }
-                }
+            let requested = entry.invoke_hook(self.hook_budget, false, || {
+                entry
+                    .plugin
+                    .space_hook()
+                    .map(|h| h.take_new_session_request())
+                    .unwrap_or(false)
+            });
+            if requested {
+                return true;
             }
         }
         false
@@ -660,45 +777,47 @@ impl PluginRegistry {
     /// Notifica a los plugins el ID de la sesión recién creada.
     pub fn on_session_created(&self, session_id: usize) {
         for entry in &self.plugins {
-            if entry.enabled {
+            entry.invoke_hook(self.hook_budget, (), || {
                 if let Some(hook) = entry.plugin.space_hook() {
-                    guarded((), || hook.on_session_created(session_id));
+                    hook.on_session_created(session_id);
                 }
-            }
+            });
         }
     }
 
     /// Notifica a los plugins el directorio de trabajo actual y nombre de carpeta de una sesión.
     pub fn update_session_cwd(&self, session_id: usize, cwd: &Path, folder_name: &str) {
         for entry in &self.plugins {
-            if entry.enabled {
+            entry.invoke_hook(self.hook_budget, (), || {
                 if let Some(hook) = entry.plugin.space_hook() {
-                    guarded((), || hook.update_session_cwd(session_id, cwd, folder_name));
+                    hook.update_session_cwd(session_id, cwd, folder_name);
                 }
-            }
+            });
         }
     }
 
     /// Notifica a los plugins el programa en primer plano de una sesión.
     pub fn update_session_app(&self, session_id: usize, app: Option<&RunningApp>) {
         for entry in &self.plugins {
-            if entry.enabled {
+            entry.invoke_hook(self.hook_budget, (), || {
                 if let Some(hook) = entry.plugin.space_hook() {
-                    guarded((), || hook.update_session_app(session_id, app));
+                    hook.update_session_app(session_id, app);
                 }
-            }
+            });
         }
     }
 
     /// Comprueba si algún plugin activo solicita cerrar una sesión específica.
     pub fn take_close_session_request(&self) -> Option<usize> {
         for entry in &self.plugins {
-            if entry.enabled {
-                if let Some(hook) = entry.plugin.space_hook() {
-                    if let Some(idx) = guarded(None, || hook.take_close_session_request()) {
-                        return Some(idx);
-                    }
-                }
+            let request = entry.invoke_hook(self.hook_budget, None, || {
+                entry
+                    .plugin
+                    .space_hook()
+                    .and_then(|h| h.take_close_session_request())
+            });
+            if request.is_some() {
+                return request;
             }
         }
         None
@@ -708,14 +827,15 @@ impl PluginRegistry {
     /// Basta con que uno pida confirmar para bloquearlo.
     pub fn close_decision(&self) -> CloseDecision {
         for entry in &self.plugins {
-            if entry.enabled {
-                if let Some(hook) = entry.plugin.lifecycle_hook() {
-                    if guarded(CloseDecision::Allow, || hook.on_close_request())
-                        == CloseDecision::Confirm
-                    {
-                        return CloseDecision::Confirm;
-                    }
-                }
+            let decision = entry.invoke_hook(self.hook_budget, CloseDecision::Allow, || {
+                entry
+                    .plugin
+                    .lifecycle_hook()
+                    .map(|h| h.on_close_request())
+                    .unwrap_or(CloseDecision::Allow)
+            });
+            if decision == CloseDecision::Confirm {
+                return CloseDecision::Confirm;
             }
         }
         CloseDecision::Allow
@@ -724,22 +844,22 @@ impl PluginRegistry {
     /// Notifica a los plugins de que una sesión ya no existe.
     pub fn on_session_closed(&self, session_id: usize) {
         for entry in &self.plugins {
-            if entry.enabled {
+            entry.invoke_hook(self.hook_budget, (), || {
                 if let Some(hook) = entry.plugin.space_hook() {
-                    guarded((), || hook.on_session_closed(session_id));
+                    hook.on_session_closed(session_id);
                 }
-            }
+            });
         }
     }
 
     /// Notifica a los plugins que el cierre fue aceptado.
     pub fn on_close_confirmed(&self) {
         for entry in &self.plugins {
-            if entry.enabled {
+            entry.invoke_hook(self.hook_budget, (), || {
                 if let Some(hook) = entry.plugin.lifecycle_hook() {
-                    guarded((), || hook.on_close_confirmed());
+                    hook.on_close_confirmed();
                 }
-            }
+            });
         }
     }
 
@@ -757,13 +877,10 @@ impl PluginRegistry {
     pub fn top_bars(&self) -> Vec<AnyElement> {
         let mut elements = Vec::new();
         for entry in &self.plugins {
-            if !entry.enabled {
-                continue;
-            }
-            if let Some(hook) = entry.plugin.layout_hook() {
-                if let Some(elem) = guarded(None, || hook.top_bar()) {
-                    elements.push(elem);
-                }
+            if let Some(elem) = entry.invoke_hook(self.hook_budget, None, || {
+                entry.plugin.layout_hook().and_then(|h| h.top_bar())
+            }) {
+                elements.push(elem);
             }
         }
         elements
@@ -773,13 +890,10 @@ impl PluginRegistry {
     pub fn left_sidebars(&self) -> Vec<AnyElement> {
         let mut elements = Vec::new();
         for entry in &self.plugins {
-            if !entry.enabled {
-                continue;
-            }
-            if let Some(hook) = entry.plugin.layout_hook() {
-                if let Some(elem) = guarded(None, || hook.left_sidebar()) {
-                    elements.push(elem);
-                }
+            if let Some(elem) = entry.invoke_hook(self.hook_budget, None, || {
+                entry.plugin.layout_hook().and_then(|h| h.left_sidebar())
+            }) {
+                elements.push(elem);
             }
         }
         elements
@@ -789,13 +903,10 @@ impl PluginRegistry {
     pub fn bottom_bars(&self) -> Vec<AnyElement> {
         let mut elements = Vec::new();
         for entry in &self.plugins {
-            if !entry.enabled {
-                continue;
-            }
-            if let Some(hook) = entry.plugin.layout_hook() {
-                if let Some(elem) = guarded(None, || hook.bottom_bar()) {
-                    elements.push(elem);
-                }
+            if let Some(elem) = entry.invoke_hook(self.hook_budget, None, || {
+                entry.plugin.layout_hook().and_then(|h| h.bottom_bar())
+            }) {
+                elements.push(elem);
             }
         }
         elements
