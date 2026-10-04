@@ -153,6 +153,34 @@
           default = port;
         });
 
+      # Verificación hermética del workspace (`nix flake check`).
+      #
+      # Se deriva directamente del paquete `port` para heredar todo el cableado
+      # de librerías de GPU (libxcb, libxkbcommon, wayland, vulkan-loader, etc.),
+      # variables de enlazado y el `cargoLock` con `outputHashes` de los plugins git,
+      # evitando duplicar dependencias.
+      #
+      # No ejecuta el `installPhase` del paquete ni postFixup (no tiene sentido
+      # empaquetar un binario para un check). `buildPhase` se desactiva para no
+      # compilar en modo release antes de que `cargo test --workspace` compile en
+      # modo test.
+      checks = forAllSystems (pkgs: {
+        default = self.packages.${pkgs.stdenv.hostPlatform.system}.port.overrideAttrs (oldAttrs: {
+          pname = "${oldAttrs.pname or "port"}-check";
+          buildPhase = "true";
+          doCheck = true;
+          checkPhase = ''
+            runHook preCheck
+            cargo test --workspace
+            runHook postCheck
+          '';
+          installPhase = ''
+            touch $out
+          '';
+          dontFixup = true;
+        });
+      });
+
       apps = forAllSystems (pkgs: {
         default = {
           type = "app";

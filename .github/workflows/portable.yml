@@ -1,0 +1,134 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Validación continua del Bundle Portable
+#
+# Relación con `.github/workflows/release.yml`:
+#
+# `release.yml` incluye su propio job `portable` que genera y empaqueta el
+# bundle (.deb, .rpm y tarball) únicamente cuando se publica una etiqueta de
+# versión (`tags: ['v*']`). Ese proceso es el que firma y publica los binarios
+# definitivos de una release.
+#
+# Por qué existe este workflow independiente:
+#
+# `build-portable.sh` compila dentro de un contenedor Docker contra Debian 12
+# (glibc 2.36) para asegurar compatibilidad fuera de NixOS. Este proceso es
+# significativamente más pesado y lento que el resto de los jobs de CI en
+# `ci.yml`. Si se ejecutara en cada commit de cada PR, saturaría los minutos de CI
+# innecesariamente.
+#
+# Este workflow actúa como red de seguridad preventiva:
+# 1. Se ejecuta periódicamente (semanal) y bajo demanda (`workflow_dispatch`).
+# 2. Se ejecuta en `push` a `master` ÚNICAMENTE si se tocan archivos que afectan
+#    al empaquetado o al código fuente (`scripts/**`, `flake.nix`, `Cargo.*`,
+#    `crates/**`).
+#
+# Así detectamos roturas de `build-portable.sh` antes de intentar publicar una
+# release formal, sin duplicar la lógica de publicación ni ralentizar el CI diario.
+#
+# Hardening:
+#  - Acciones fijadas a SHA completo con comentario de versión.
+#  - Permisos mínimos: `permissions: contents: read` (no publica nada).
+#  - Nunca usa `pull_request_target`.
+#  - `persist-credentials: false` en checkout.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Portable Bundle
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'scripts/**'
+      - 'flake.nix'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/**'
+  schedule:
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: portable-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  portable-bundle:
+    name: build and verify portable bundle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      # El workspace trae parches a rutas locales (`../port-plugins/...`) para
+      # desarrollar sin publicar. Ese repositorio hermano no existe en el runner,
+      # así que se retiran antes de resolver dependencias.
+      - name: Retirar parches locales
+        run: ./scripts/disable-local-patch.sh
+
+      # Docker viene preinstalado en los runners de Ubuntu, así que el bundle
+      # se compila igual para todos los entornos con independencia del sistema anfitrión.
+      - name: Compilar bundle portable
+        run: ./scripts/build-portable.sh
+
+      # Verificación exhaustiva: asegura que el binario no enlaza contra el store
+      # de Nix y que las librerías necesarias fueron empaquetadas en lib/.
+      - name: Comprobar el bundle
+        run: |
+          set -euo pipefail
+          BUNDLE="$(echo dist/port-*-linux-x86_64)"
+          echo "Bundle: $BUNDLE"
+          if [ ! -d "$BUNDLE" ]; then
+            echo "::error::directorio de bundle no encontrado: $BUNDLE"
+            exit 1
+          fi
+
+          if [ ! -x "$BUNDLE/bin/port" ]; then
+            echo "::error::ejecutable bin/port no encontrado en $BUNDLE"
+            exit 1
+          fi
+
+          # El intérprete no debe apuntar al store: es lo que hace portable
+          # al binario fuera de Nix.
+          interp="$(readelf -l "$BUNDLE/bin/port" | sed -n 's/.*interpreter: \(.*\)\]/\1/p')"
+          if [ -z "$interp" ]; then
+            echo "::error::no se pudo determinar el interprete dinamico del binario"
+            exit 1
+          fi
+          case "$interp" in
+            /nix/store/*)
+              echo "::error::el interprete sigue en el store: $interp"
+              exit 1
+              ;;
+          esac
+          echo "Interprete: $interp"
+
+          # El directorio lib/ debe existir y contener las librerias empaquetadas.
+          if [ ! -d "$BUNDLE/lib" ]; then
+            echo "::error::el directorio lib/ no existe en $BUNDLE"
+            exit 1
+          fi
+
+          if [ -z "$(ls -A "$BUNDLE/lib")" ]; then
+            echo "::error::el directorio lib/ esta vacio"
+            exit 1
+          fi
+
+          echo "Librerias empaquetadas en lib/:"
+          ls -la "$BUNDLE/lib"
+
+      - name: Subir artefacto portable
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: port-portable-linux-x86_64
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
