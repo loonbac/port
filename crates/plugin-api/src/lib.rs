@@ -212,26 +212,6 @@ pub trait LayoutHook {
     }
 }
 
-/// Capacidades de personalización y sustitución del menú gestor de plugins del core.
-pub trait PluginManagerHook {
-    /// Atajo de teclado para alternar la visibilidad del menú (por defecto "ctrl+shift+l").
-    fn toggle_shortcut(&self) -> Option<&'static str> {
-        None
-    }
-
-    /// Título personalizado para el encabezado del menú de plugins.
-    fn menu_title(&self) -> Option<&'static str> {
-        None
-    }
-
-    /// Permite a un plugin sustituir por completo el renderizado visual del menú de plugins.
-    /// Recibe la lista completa de plugins registrados y el índice actualmente seleccionado.
-    fn render_menu(&self, plugins: &[PluginInfo], selected_index: usize) -> Option<AnyElement> {
-        let _ = (plugins, selected_index);
-        None
-    }
-}
-
 /// Capacidades de gestión de espacios de trabajo y sesiones múltiples (como Herdr).
 pub trait SpaceHook {
     /// Identificador de la sesión PTY activa que debe recibir entrada y renderizarse.
@@ -335,11 +315,6 @@ pub trait Plugin: 'static {
 
     /// Hook de layout, si el plugin lo implementa.
     fn layout_hook(&self) -> Option<&dyn LayoutHook> {
-        None
-    }
-
-    /// Hook para personalizar o extender el menú de gestión de plugins del core.
-    fn plugin_manager_hook(&self) -> Option<&dyn PluginManagerHook> {
         None
     }
 
@@ -486,51 +461,6 @@ impl PluginRegistry {
     }
 
     /// Atajo efectivo para abrir/cerrar el menú de plugins (por defecto "ctrl+shift+l").
-    pub fn effective_menu_shortcut(&self) -> &'static str {
-        for entry in &self.plugins {
-            if entry.enabled {
-                if let Some(hook) = entry.plugin.plugin_manager_hook() {
-                    if let Some(shortcut) = hook.toggle_shortcut() {
-                        return shortcut;
-                    }
-                }
-            }
-        }
-        "ctrl+shift+l"
-    }
-
-    /// Título efectivo para el encabezado del menú de plugins.
-    pub fn effective_menu_title(&self) -> &'static str {
-        for entry in &self.plugins {
-            if entry.enabled {
-                if let Some(hook) = entry.plugin.plugin_manager_hook() {
-                    if let Some(title) = hook.menu_title() {
-                        return title;
-                    }
-                }
-            }
-        }
-        "Gestor de Plugins (PORT)"
-    }
-
-    /// Renderizado visual del menú provisto por un plugin personalizado, si alguno lo define.
-    pub fn render_custom_menu(
-        &self,
-        plugins: &[PluginInfo],
-        selected_index: usize,
-    ) -> Option<AnyElement> {
-        for entry in &self.plugins {
-            if entry.enabled {
-                if let Some(hook) = entry.plugin.plugin_manager_hook() {
-                    if let Some(element) = hook.render_menu(plugins, selected_index) {
-                        return Some(element);
-                    }
-                }
-            }
-        }
-        None
-    }
-
     /// Calcula la opacidad efectiva combinando los plugins de apariencia activos.
     /// Si ningún plugin especifica opacidad, el valor por defecto es `1.0` (opaco).
     pub fn effective_opacity(&self) -> f32 {

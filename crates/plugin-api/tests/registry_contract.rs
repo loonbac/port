@@ -3,8 +3,7 @@ use std::sync::Arc;
 
 use gpui::{div, Element};
 use port_plugin_api::{
-    AppearanceHook, InputHook, KeyAction, LayoutHook, Plugin, PluginConfig, PluginManagerHook,
-    PluginRegistry,
+    AppearanceHook, InputHook, KeyAction, LayoutHook, Plugin, PluginConfig, PluginRegistry,
 };
 use port_term_core::frame::Rgb;
 use port_term_core::input::Key;
@@ -98,32 +97,6 @@ impl Plugin for MockConfigurablePlugin {
     }
 }
 
-struct MockMenuPatchPlugin;
-
-impl PluginManagerHook for MockMenuPatchPlugin {
-    fn toggle_shortcut(&self) -> Option<&'static str> {
-        Some("ctrl+shift+p")
-    }
-
-    fn menu_title(&self) -> Option<&'static str> {
-        Some("Custom Plugins Patch")
-    }
-}
-
-impl Plugin for MockMenuPatchPlugin {
-    fn id(&self) -> &'static str {
-        "menu-patch"
-    }
-
-    fn name(&self) -> &'static str {
-        "Mock Menu Patch"
-    }
-
-    fn plugin_manager_hook(&self) -> Option<&dyn PluginManagerHook> {
-        Some(self)
-    }
-}
-
 struct MockTintPlugin;
 
 impl AppearanceHook for MockTintPlugin {
@@ -214,8 +187,6 @@ fn empty_registry_has_default_values() {
     assert_eq!(registry.dispatch_key(&Key::new("a")), KeyAction::Pass);
     assert_eq!(registry.top_bars().len(), 0);
     assert_eq!(registry.left_sidebars().len(), 0);
-    assert_eq!(registry.effective_menu_shortcut(), "ctrl+shift+l");
-    assert_eq!(registry.effective_menu_title(), "Gestor de Plugins (PORT)");
 }
 
 #[test]
@@ -305,20 +276,6 @@ fn layout_hook_collects_slot_elements() {
     assert_eq!(registry.top_bars().len(), 1);
     assert_eq!(registry.left_sidebars().len(), 1);
     assert_eq!(registry.bottom_bars().len(), 0);
-}
-
-#[test]
-fn plugin_manager_hook_can_patch_shortcut_and_title() {
-    let mut registry = PluginRegistry::new();
-    registry.register(MockMenuPatchPlugin);
-
-    assert_eq!(registry.effective_menu_shortcut(), "ctrl+shift+p");
-    assert_eq!(registry.effective_menu_title(), "Custom Plugins Patch");
-
-    // Si se deshabilita el parche, vuelve a los valores core por defecto
-    registry.set_enabled("menu-patch", false);
-    assert_eq!(registry.effective_menu_shortcut(), "ctrl+shift+l");
-    assert_eq!(registry.effective_menu_title(), "Gestor de Plugins (PORT)");
 }
 
 #[test]

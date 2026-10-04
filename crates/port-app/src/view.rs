@@ -19,18 +19,13 @@ use gpui::{
     anchored, canvas, deferred, div, fill, point, px, rgb, size, App, Bounds, Context, FocusHandle,
     Font, FontFallbacks, FontStyle, FontWeight, MouseButton, Pixels, Render, TextRun, Window,
 };
-use port_plugin_api::{PluginInfo, PluginRegistry};
+use port_plugin_api::PluginRegistry;
 use port_term_core::frame::{Frame, Rgb, Run, Style};
 use port_term_core::session::SessionManager;
 
 use crate::metrics::Metrics;
 
-/// Estado visual del menú gestor de plugins.
-#[derive(Debug, Default, Clone)]
-pub struct MenuState {
-    pub open: bool,
-    pub selected_index: usize,
-}
+pub use crate::menu::MenuState;
 
 pub struct TerminalView {
     session_manager: Rc<RefCell<SessionManager>>,
@@ -87,18 +82,11 @@ impl Render for TerminalView {
         let bottom_inset = plugins.bottom_bar_height();
 
         let plugin_list = plugins.list_plugins();
-        let menu_title = plugins.effective_menu_title().to_string();
+        let menu_title = crate::menu::MENU_TITLE.to_string();
 
         let menu_state = self.menu_state.borrow();
         let menu_open = menu_state.open;
-        let selected_index = menu_state.selected_index;
         drop(menu_state);
-
-        let custom_menu = if menu_open {
-            plugins.render_custom_menu(&plugin_list, selected_index)
-        } else {
-            None
-        };
 
         let usable_w = (width - left_inset).max(100.0);
         let usable_h = (height - top_inset - bottom_inset).max(100.0);
@@ -221,19 +209,15 @@ impl Render for TerminalView {
 
         root = root.child(main_col);
 
-        // Si el menú de plugins está abierto, se proyecta como overlay flotante
+        // Si el menú de plugins está abierto, se proyecta como overlay flotante gestionado por el núcleo
         if menu_open {
-            if let Some(custom) = custom_menu {
-                root = root.child(custom);
-            } else {
-                root = root.child(render_core_plugin_menu(
-                    &plugin_list,
-                    selected_index,
-                    &menu_title,
-                    width,
-                    height,
-                ));
-            }
+            root = root.child(crate::menu::render_menu(
+                &self.menu_state.borrow(),
+                &plugin_list,
+                &menu_title,
+                width,
+                height,
+            ));
         }
 
         // Diálogo de confirmación de cierre, con el mismo tratamiento visual:
@@ -442,193 +426,6 @@ fn render_close_prompt(
         ),
     )
     .priority(200)
-}
-
-/// Renderiza el modal nativo de gestión de plugins del core de PORT.
-fn render_core_plugin_menu(
-    plugins: &[PluginInfo],
-    selected_index: usize,
-    title: &str,
-    window_width: f32,
-    window_height: f32,
-) -> impl IntoElement {
-    let modal_w = 540.0f32.min(window_width - 40.0);
-    let left = ((window_width - modal_w) * 0.5).max(10.0);
-    let top = (window_height * 0.12).max(20.0);
-
-    let mut list = div().flex().flex_col().gap(px(6.0));
-
-    for (i, p) in plugins.iter().enumerate() {
-        let is_selected = i == selected_index;
-        let (status_text, dot_color, badge_bg, badge_border) = if p.enabled {
-            ("ACTIVE", rgb(0x3fb950), rgb(0x0e2717), rgb(0x238636))
-        } else {
-            ("OFF", rgb(0x8b949e), rgb(0x161b22), rgb(0x30363d))
-        };
-
-        let row_bg = if is_selected {
-            rgb(0x21262d)
-        } else {
-            rgb(0x161b22)
-        };
-
-        let row_border = if is_selected {
-            rgb(0x58a6ff)
-        } else {
-            rgb(0x30363d)
-        };
-
-        let item = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .px(px(10.0))
-            .py(px(8.0))
-            .rounded(px(6.0))
-            .bg(row_bg)
-            .border_1()
-            .border_color(row_border)
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(10.0))
-                    .child(
-                        // Indicador de estado estilo chip profesional con punto vectorial
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(6.0))
-                            .px(px(8.0))
-                            .py(px(2.0))
-                            .rounded(px(4.0))
-                            .bg(badge_bg)
-                            .border_1()
-                            .border_color(badge_border)
-                            .child(div().w(px(6.0)).h(px(6.0)).rounded(px(3.0)).bg(dot_color))
-                            .child(
-                                div()
-                                    .text_size(px(11.0))
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(dot_color)
-                                    .child(status_text),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(13.0))
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(rgb(0xf0f6fc))
-                            .child(p.name.clone()),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(11.0))
-                            .text_color(rgb(0x8b949e))
-                            .child(format!("({})", p.id)),
-                    ),
-            )
-            .child(
-                div()
-                    .px(px(6.0))
-                    .py(px(2.0))
-                    .rounded(px(4.0))
-                    .bg(rgb(0x21262d))
-                    .text_size(px(11.0))
-                    .text_color(rgb(0x8b949e))
-                    .child(format!("v{}", p.version)),
-            );
-
-        list = list.child(item);
-    }
-
-    let modal = div()
-        .w(px(modal_w))
-        .p(px(16.0))
-        .rounded(px(8.0))
-        .bg(rgb(0x0d1117))
-        .border_1()
-        .border_color(rgb(0x30363d))
-        .flex()
-        .flex_col()
-        .gap(px(12.0))
-        .child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_between()
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(8.0))
-                        .child(
-                            div()
-                                .px(px(6.0))
-                                .py(px(2.0))
-                                .rounded(px(4.0))
-                                .bg(rgb(0x1f293d))
-                                .border_1()
-                                .border_color(rgb(0x388bfd))
-                                .text_size(px(10.0))
-                                .font_weight(FontWeight::BOLD)
-                                .text_color(rgb(0x58a6ff))
-                                .child("PLUGINS"),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(14.0))
-                                .font_weight(FontWeight::BOLD)
-                                .text_color(rgb(0xf0f6fc))
-                                .child(title.to_string()),
-                        ),
-                )
-                .child(
-                    div()
-                        .px(px(6.0))
-                        .py(px(2.0))
-                        .rounded(px(4.0))
-                        .bg(rgb(0x161b22))
-                        .border_1()
-                        .border_color(rgb(0x30363d))
-                        .text_size(px(11.0))
-                        .text_color(rgb(0x8b949e))
-                        .child("PORT Core"),
-                ),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(12.0))
-                .child(
-                    div()
-                        .text_size(px(11.0))
-                        .text_color(rgb(0x8b949e))
-                        .child("↑↓ Navegar"),
-                )
-                .child(
-                    div()
-                        .text_size(px(11.0))
-                        .text_color(rgb(0x8b949e))
-                        .child("Espacio / Enter Alternar"),
-                )
-                .child(
-                    div()
-                        .text_size(px(11.0))
-                        .text_color(rgb(0x8b949e))
-                        .child("Esc Cerrar"),
-                ),
-        )
-        .child(list);
-
-    deferred(anchored().position(point(px(left), px(top))).child(modal)).priority(100)
 }
 
 /// Pinta el cuadro completo: quads de fondo, glifos geométricos y texto.

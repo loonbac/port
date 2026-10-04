@@ -5,6 +5,7 @@
 
 mod cli;
 mod keys;
+mod menu;
 mod metrics;
 mod view;
 
@@ -21,15 +22,15 @@ use port_plugin_close_guard::CloseGuardPlugin;
 use port_plugin_font::FontPlugin;
 use port_plugin_font_zoom::FontZoomPlugin;
 use port_plugin_herdr::HerdrPlugin;
-use port_plugin_menu_customizer::MenuCustomizerPlugin;
 use port_plugin_shortcuts::ShortcutsPlugin;
 use port_plugin_transparency::TransparencyPlugin;
 use port_term_core::input::Key;
 use port_term_core::pty::PtyConfig;
 use port_term_core::session::SessionManager;
 
+use crate::menu::{ExternalPluginInfo, MenuAction, MenuState};
 use crate::metrics::Metrics;
-use crate::view::{ClosePromptState, MenuState, TerminalView};
+use crate::view::{ClosePromptState, TerminalView};
 
 /// Tamaño de fuente base de fábrica si no hay configuración.
 const BASE_FONT_SIZE: f32 = 14.0;
@@ -69,7 +70,6 @@ fn run_terminal() {
         shortcuts.bind_service("ctrl+-", "font-zoom", "zoom_out");
         shortcuts.bind_service("ctrl+0", "font-zoom", "reset");
         plugin_registry.register(shortcuts);
-        plugin_registry.register(MenuCustomizerPlugin::default());
         plugin_registry.register(HerdrPlugin::new());
 
         // Guardián de cierre: pregunta si hay programas corriendo al cerrar.
@@ -77,25 +77,39 @@ fn run_terminal() {
         let close_prompt = Rc::new(RefCell::new(ClosePromptState::default()));
         plugin_registry.register(close_guard.clone());
 
-        // Plugins externos instalados con `port plugin add`. Se arrancan
-        // despues de los compilados: son los de terceros y no deben poder
-        // impedir que la terminal levante.
-        let external = port_plugin_api::host::installed()
-            .into_iter()
-            .filter_map(|manifest| {
-                match port_plugin_api::host::ExternalPlugin::start(manifest) {
-                    Ok(plugin) => Some(plugin),
-                    Err(e) => {
-                        // Un plugin roto se avisa y se sigue: la terminal
-                        // abre igual, que es lo que importa.
-                        eprintln!("plugin no cargado: {e}");
-                        None
-                    }
+        // Plugins externos instalados con `port plugin add` o desde el menú.
+        // Se cargan y arrancan sin bloquear el inicio si alguno falla.
+        let installed = port_plugin_api::host::installed();
+        let mut running_external: Vec<std::sync::Arc<port_plugin_api::host::ExternalPlugin>> =
+            Vec::new();
+        let mut external_infos: Vec<ExternalPluginInfo> = Vec::new();
+
+        for manifest in installed {
+            match port_plugin_api::host::ExternalPlugin::start(manifest.clone()) {
+                Ok(plugin) => {
+                    running_external.push(plugin);
+                    external_infos.push(ExternalPluginInfo {
+                        id: manifest.id,
+                        name: manifest.name,
+                        version: manifest.version,
+                        enabled: true,
+                        running: true,
+                    });
                 }
-            })
-            .collect::<Vec<_>>();
-        if !external.is_empty() {
-            eprintln!("{} plugin(s) externo(s) cargados", external.len());
+                Err(e) => {
+                    eprintln!("plugin no cargado: {e}");
+                    external_infos.push(ExternalPluginInfo {
+                        id: manifest.id,
+                        name: manifest.name,
+                        version: manifest.version,
+                        enabled: false,
+                        running: false,
+                    });
+                }
+            }
+        }
+        if !running_external.is_empty() {
+            eprintln!("{} plugin(s) externo(s) cargados", running_external.len());
         }
 
         // Carga la configuración desde ~/.config/port/config.md o la crea con los defaults
@@ -112,8 +126,42 @@ fn run_terminal() {
                 .expect("no se pudo arrancar el shell"),
         ));
 
+        let external_plugins = Rc::new(RefCell::new(running_external));
         let plugins = Rc::new(RefCell::new(plugin_registry));
-        let menu_state = Rc::new(RefCell::new(MenuState::default()));
+        let menu_state = Rc::new(RefCell::new(MenuState {
+            external_plugins: external_infos,
+            ..Default::default()
+        }));
+
+        let session_for_view = Rc::clone(&session_manager);
+        let metrics_for_view = metrics.clone();
+        let plugins_for_view = Rc::clone(&plugins);
+        let menu_state_for_view = Rc::clone(&menu_state);
+        let close_prompt_for_view = Rc::clone(&close_prompt);
+
+        let window = cx
+            .open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    window_background: WindowBackgroundAppearance::Transparent,
+                    app_id: Some("port".to_string()),
+                    ..Default::default()
+                },
+                move |_, cx| {
+                    let focus_handle = cx.focus_handle();
+                    cx.new(|_| {
+                        TerminalView::new(
+                            session_for_view,
+                            metrics_for_view,
+                            focus_handle,
+                            plugins_for_view,
+                            menu_state_for_view,
+                            close_prompt_for_view,
+                        )
+                    })
+                },
+            )
+            .expect("no se pudo abrir la ventana");
 
         // En una terminal cada tecla le pertenece al PTY, salvo que el menú de plugins
         // esté activo o un plugin decida consumirla.
@@ -121,7 +169,9 @@ fn run_terminal() {
         let plugins_for_keys = Rc::clone(&plugins);
         let menu_state_for_keys = Rc::clone(&menu_state);
         let close_prompt_for_keys = Rc::clone(&close_prompt);
-        cx.intercept_keystrokes(move |ev, window, _cx| {
+        let external_plugins_for_keys = Rc::clone(&external_plugins);
+        let window_for_install = window;
+        cx.intercept_keystrokes(move |ev, window, cx| {
             if let Some(key) = keys::to_core_key(&ev.keystroke) {
                 // El diálogo de cierre es modal: captura el teclado entero.
                 if close_prompt_for_keys.borrow().open {
@@ -154,39 +204,145 @@ fn run_terminal() {
                 }
 
                 // Comprobación de atajo de apertura/cierre del menú de plugins (Ctrl+Shift+L por defecto)
-                let shortcut = plugins_for_keys.borrow().effective_menu_shortcut();
+                let shortcut = crate::menu::MENU_SHORTCUT;
                 if matches_shortcut(&key, shortcut) {
                     let mut s = menu_state_for_keys.borrow_mut();
-                    s.open = !s.open;
-                    s.selected_index = 0;
+                    if s.open {
+                        s.close_menu();
+                    } else {
+                        s.open_menu();
+                    }
                     drop(s);
                     window.refresh();
                     return;
                 }
 
-                // Si el menú está abierto, intercepta la navegación y acciones
+                // Si el menú está abierto, delega la entrada al módulo de menú
                 if menu_state_for_keys.borrow().open {
-                    match key.key.as_str() {
-                        "Escape" => {
+                    let (total_items, compiled_count) = {
+                        let s = menu_state_for_keys.borrow();
+                        let c_count = plugins_for_keys.borrow().len();
+                        (s.total_items_count(c_count), c_count)
+                    };
+                    let action = menu_state_for_keys.borrow_mut().handle_key(
+                        &key,
+                        total_items,
+                        compiled_count,
+                    );
+                    match action {
+                        MenuAction::Close => {
                             menu_state_for_keys.borrow_mut().open = false;
                         }
-                        "Up" | "k" => {
-                            let mut s = menu_state_for_keys.borrow_mut();
-                            s.selected_index = s.selected_index.saturating_sub(1);
-                        }
-                        "Down" | "j" => {
-                            let mut s = menu_state_for_keys.borrow_mut();
-                            let max = plugins_for_keys.borrow().len().saturating_sub(1);
-                            s.selected_index = (s.selected_index + 1).min(max);
-                        }
-                        "Enter" | "Return" | " " => {
-                            let idx = menu_state_for_keys.borrow().selected_index;
+                        MenuAction::ToggleCompiled(idx) => {
                             let mut reg = plugins_for_keys.borrow_mut();
                             if let Some(_new_status) = reg.toggle_enabled_at(idx) {
                                 let _ = reg.save_all_to_default_file();
                             }
                         }
-                        _ => {}
+                        MenuAction::ToggleExternal(idx) => {
+                            let mut s = menu_state_for_keys.borrow_mut();
+                            if let Some(p_info) = s.external_plugins.get_mut(idx) {
+                                if p_info.running {
+                                    p_info.running = false;
+                                    p_info.enabled = false;
+                                    let id = p_info.id.clone();
+                                    external_plugins_for_keys
+                                        .borrow_mut()
+                                        .retain(|p| p.manifest().id != id);
+                                } else {
+                                    let id = p_info.id.clone();
+                                    if let Some(manifest) = port_plugin_api::host::installed()
+                                        .into_iter()
+                                        .find(|m| m.id == id)
+                                    {
+                                        match port_plugin_api::host::ExternalPlugin::start(manifest)
+                                        {
+                                            Ok(plugin) => {
+                                                external_plugins_for_keys.borrow_mut().push(plugin);
+                                                p_info.running = true;
+                                                p_info.enabled = true;
+                                            }
+                                            Err(e) => {
+                                                eprintln!("no se pudo iniciar plugin {id}: {e}");
+                                                p_info.running = false;
+                                                p_info.enabled = false;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        MenuAction::StartInstall(url) => {
+                            let menu_state_bg = Rc::clone(&menu_state_for_keys);
+                            let external_bg = Rc::clone(&external_plugins_for_keys);
+                            let window_bg = window_for_install;
+                            cx.spawn(async move |cx| {
+                                // El trabajo pesado va al pool de hilos: clonar
+                                // y compilar tarda segundos y en el hilo de
+                                // GPUI congelaria la terminal.
+                                let task = cx.background_executor().spawn(async move {
+                                    port_plugin_api::install::install(&url).map(|manifest| {
+                                        let started =
+                                            port_plugin_api::host::ExternalPlugin::start(
+                                                manifest.clone(),
+                                            );
+                                        (manifest, started)
+                                    })
+                                });
+                                let install_res = task.await;
+                                window_bg
+                                    .update(cx, move |_, window, _cx| {
+                                        let mut s = menu_state_bg.borrow_mut();
+                                        match install_res {
+                                            Ok((manifest, start_res)) => match start_res {
+                                                Ok(plugin) => {
+                                                    external_bg.borrow_mut().push(plugin);
+                                                    s.add_or_update_external(ExternalPluginInfo {
+                                                        id: manifest.id.clone(),
+                                                        name: manifest.name.clone(),
+                                                        version: manifest.version.clone(),
+                                                        enabled: true,
+                                                        running: true,
+                                                    });
+                                                    s.finish_install(
+                                                        true,
+                                                        format!(
+                                                            "Plugin '{}' v{} installed and started successfully.",
+                                                            manifest.name, manifest.version
+                                                        ),
+                                                    );
+                                                }
+                                                Err(err) => {
+                                                    s.add_or_update_external(ExternalPluginInfo {
+                                                        id: manifest.id.clone(),
+                                                        name: manifest.name.clone(),
+                                                        version: manifest.version.clone(),
+                                                        enabled: false,
+                                                        running: false,
+                                                    });
+                                                    s.finish_install(
+                                                        false,
+                                                        format!(
+                                                            "Plugin '{}' v{} installed, but failed to start: {}",
+                                                            manifest.name, manifest.version, err
+                                                        ),
+                                                    );
+                                                }
+                                            },
+                                            Err(err) => {
+                                                s.finish_install(
+                                                    false,
+                                                    format!("Failed to install plugin: {}", err),
+                                                );
+                                            }
+                                        }
+                                        window.refresh();
+                                    })
+                                    .ok();
+                            })
+                            .detach();
+                        }
+                        MenuAction::Refresh | MenuAction::None => {}
                     }
                     window.refresh();
                     return;
@@ -194,6 +350,21 @@ fn run_terminal() {
 
                 // Si un plugin consume la tecla (ej. atajo de tab o sidebar), no se envía al PTY
                 if plugins_for_keys.borrow().dispatch_key(&key) == KeyAction::Consume {
+                    window.refresh();
+                    return;
+                }
+
+                // Plugins externos: resolver combinaciones registradas
+                if let Some((plugin, action)) =
+                    port_plugin_api::host::ExternalPlugin::resolve_action(
+                        &external_plugins_for_keys.borrow(),
+                        &key.key,
+                        key.ctrl,
+                        key.alt,
+                        key.shift,
+                    )
+                {
+                    let _ = plugin.invoke(&action);
                     window.refresh();
                     return;
                 }
@@ -207,36 +378,6 @@ fn run_terminal() {
             window.refresh();
         })
         .detach();
-
-        let session_for_view = Rc::clone(&session_manager);
-        let metrics_for_view = metrics.clone();
-        let plugins_for_view = Rc::clone(&plugins);
-        let menu_state_for_view = Rc::clone(&menu_state);
-        let close_prompt_for_view = Rc::clone(&close_prompt);
-
-        let window = cx
-            .open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    window_background: WindowBackgroundAppearance::Transparent,
-                    app_id: Some("port".to_string()),
-                    ..Default::default()
-                },
-                move |_, cx| {
-                    let focus_handle = cx.focus_handle();
-                    cx.new(|_| {
-                        TerminalView::new(
-                            session_for_view,
-                            metrics_for_view,
-                            focus_handle,
-                            plugins_for_view,
-                            menu_state_for_view,
-                            close_prompt_for_view,
-                        )
-                    })
-                },
-            )
-            .expect("no se pudo abrir la ventana");
 
         // Cierre protegido: si algún plugin detecta trabajo en curso, cancela el
         // cierre y muestra su diálogo. Si no, la ventana se cierra sin preguntar.

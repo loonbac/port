@@ -29,7 +29,6 @@ port-plugin-transparency = { git = "https://github.com/loonbac/port-plugins.git"
 port-plugin-font = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.2" }
 port-plugin-font-zoom = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.2" }
 port-plugin-shortcuts = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.2" }
-port-plugin-menu-customizer = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.2" }
 port-plugin-herdr = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.2" }
 port-plugin-close-guard = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.2" }
 

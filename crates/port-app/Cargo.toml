@@ -17,6 +17,5 @@ port-plugin-transparency = { workspace = true }
 port-plugin-font = { workspace = true }
 port-plugin-font-zoom = { workspace = true }
 port-plugin-shortcuts = { workspace = true }
-port-plugin-menu-customizer = { workspace = true }
 port-plugin-herdr = { workspace = true }
 port-plugin-close-guard = { workspace = true }
