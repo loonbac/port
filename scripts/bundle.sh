@@ -152,9 +152,19 @@ main() {
     fi
   done
 
-  echo "==> Fijando RUNPATH a \$ORIGIN/../lib"
+  # DT_RPATH y no DT_RUNPATH, a proposito.
+  #
+  # patchelf --set-rpath escribe DT_RUNPATH, y el cargador de librerias NO lo
+  # hereda a las dependencias transitivas: solo lo consultan las dependencias
+  # DIRECTAS del ejecutable. libxcb-xkb.so.1 no se carga directa, sino a traves
+  # de libxkbcommon-x11.so.0, asi que se resolvia contra el sistema y el bundle
+  # se declaraba no autocontenido.
+  #
+  # DT_RPATH si se hereda, que es justo lo que necesita un bundle autocontenido.
+  # --force-rpath pide a patchelf que escriba DT_RPATH en lugar de DT_RUNPATH.
+  echo "==> Fijando RPATH a \$ORIGIN/../lib"
   if command -v patchelf >/dev/null 2>&1; then
-    patchelf --set-rpath '$ORIGIN/../lib' "$BUNDLE/bin/$BIN"
+    patchelf --force-rpath --set-rpath '$ORIGIN/../lib' "$BUNDLE/bin/$BIN"
   else
     die "patchelf es necesario para fijar el RUNPATH (paquete: patchelf)"
   fi
