@@ -94,7 +94,14 @@ jobs:
           set -eu
           mkdir -p dist
           cp result/bin/${{ env.BIN }} dist/
-          VERSION="$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo 0.1.0)"
+          # El tag manda: es lo que el usuario acaba de publicar. Si no hay tag todavia
+            # (por ejemplo en una ejecucion manual), se recurre a Cargo.toml, que es la
+            # fuente unica de la version del proyecto.
+            VERSION="$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)"
+            if [ -z "$VERSION" ]; then
+              VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
+            fi
+            echo "VERSION=$VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Subir binario

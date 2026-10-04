@@ -7,7 +7,9 @@
 set -euo pipefail
 
 PKG="${1:-}"
-VERSION="0.1.0"
+# shellcheck source=scripts/version.sh
+source "$(dirname "${BASH_SOURCE[0]}")/version.sh"
+VERSION="$PORT_VERSION"
 BIN="port"
 BINARY="result/bin/$BIN"
 DIST="dist"

@@ -20,7 +20,10 @@
 # desarrollo en el sistema.
 set -euo pipefail
 
-VERSION="0.1.0"
+# shellcheck source=scripts/version.sh
+source "$(dirname "${BASH_SOURCE[0]}")/version.sh"
+
+VERSION="$PORT_VERSION"
 # Debian 12 trae glibc 2.36, que es el suelo razonable: Ubuntu 22.04, Fedora 36
 # yRHEL/Rocky 9.3 arrancan con el mismo binario.
 IMAGE="debian:12-slim"

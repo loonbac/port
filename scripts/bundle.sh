@@ -13,7 +13,10 @@
 # sistema: es lo queconnects la GPU, y no tiene sentido empaquetarlo.
 set -euo pipefail
 
-VERSION="0.1.0"
+# shellcheck source=scripts/version.sh
+source "$(dirname "${BASH_SOURCE[0]}")/version.sh"
+
+VERSION="$PORT_VERSION"
 BIN="port"
 DIST="dist"
 BUNDLE="$DIST/$BIN-$VERSION-linux-x86_64"
