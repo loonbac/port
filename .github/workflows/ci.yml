@@ -42,9 +42,10 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   BIN: port
-  # Versión de Rust usada en todos los jobs. Fijarla aquí evita que un cambio
-  # de toolchain rompa la build de forma distinta en cada runner.
-  RUST_VERSION: 1.90.0
+  # Se usa el canal estable en vez de un número exacto: fijar una versión
+  # concreta la hacia obsoleta sin avisar, y el día que se jubile el workflow
+  # falla al instalarla en todos los jobs a la vez.
+  RUST_TOOLCHAIN: stable
 
 jobs:
   # ── Linux vía Nix: build hermética, vale para cualquier distro ───────────────
@@ -175,8 +176,8 @@ jobs:
       - name: Instalar Rust
         run: |
           set -eu
-          rustup toolchain install "$RUST_VERSION" --profile minimal
-          rustup default "$RUST_VERSION"
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
           rustc --version
 
       - name: Cache de compilaciones
@@ -186,7 +187,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: cargo-${{ matrix.os }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock') }}
+          key: cargo-${{ matrix.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: cargo-${{ matrix.os }}-
 
       - name: Test
@@ -229,8 +230,8 @@ jobs:
       - name: Instalar Rust
         run: |
           set -eu
-          rustup toolchain install "$RUST_VERSION" --profile minimal
-          rustup default "$RUST_VERSION"
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
           rustc --version
 
       - name: Test
@@ -274,8 +275,8 @@ jobs:
       - name: Instalar Rust
         run: |
           set -eu
-          rustup toolchain install "$RUST_VERSION" --profile minimal
-          rustup default "$RUST_VERSION"
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
           rustc --version
 
       - name: Test del núcleo
@@ -307,8 +308,8 @@ jobs:
       - name: Instalar Rust
         run: |
           set -eu
-          rustup toolchain install "$RUST_VERSION" --profile minimal --component clippy,rustfmt
-          rustup default "$RUST_VERSION"
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy,rustfmt
+          rustup default "$RUST_TOOLCHAIN"
 
       - name: Formato
         run: cargo fmt --all -- --check

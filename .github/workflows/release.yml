@@ -27,7 +27,7 @@ concurrency:
 
 env:
   BIN: port
-  RUST_VERSION: 1.90.0
+  RUST_TOOLCHAIN: stable
 
 jobs:
   linux-binary:
