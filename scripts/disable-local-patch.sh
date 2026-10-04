@@ -48,9 +48,7 @@ else
   echo "parches locales retirados"
 fi
 
-# El lock se regenera porque sus entradas locales de port-plugins ya no son
-# resolubles una vez retirado el parche.
-if [ -f Cargo.lock ]; then
-  rm -f Cargo.lock
-  echo "lock eliminado: se regenera contra el tag publicado"
-fi
+# El lock no se toca. Es lo que rompia la build: al regenerarlo cambian los
+# commits que fija, y con ellos los hashes de vendorizacion que Nix exige para
+# las dependencias git de los plugins. El lock versionado ya resuelve contra el
+# tag publicado en cuanto se retira el parche local.
