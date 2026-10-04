@@ -3,7 +3,8 @@ use std::sync::Arc;
 
 use gpui::{div, Element};
 use port_plugin_api::{
-    AppearanceHook, InputHook, KeyAction, LayoutHook, Plugin, PluginConfig, PluginRegistry,
+    AppearanceHook, CloseDecision, InputHook, KeyAction, LayoutHook, LifecycleHook, Plugin,
+    PluginConfig, PluginRegistry, SpaceHook,
 };
 use port_term_core::frame::Rgb;
 use port_term_core::input::Key;
@@ -461,4 +462,164 @@ fn a_service_action_can_fail_with_a_reason() {
         services.call("counter", "add", &[Arg::Num(1.0)]),
         Ok(Ret::Num(101.0))
     );
+}
+
+/// Plugin que entra en pánico en todos sus hooks.
+///
+/// Es el peor caso posible: código de terceros que revienta dentro de la
+/// terminal. Sirve para comprobar que el núcleo sobrevive.
+struct PanickingPlugin;
+
+impl AppearanceHook for PanickingPlugin {
+    fn opacity(&self) -> Option<f32> {
+        panic!("hook de apariencia fallo");
+    }
+
+    fn background_tint(&self, _base: Rgb) -> Rgb {
+        panic!("tinte fallo");
+    }
+
+    fn font_family(&self) -> Option<String> {
+        panic!("familia fallo");
+    }
+}
+
+impl InputHook for PanickingPlugin {
+    fn on_key(&self, _key: &Key) -> KeyAction {
+        panic!("manejo de teclado fallo");
+    }
+}
+
+impl LayoutHook for PanickingPlugin {
+    fn left_sidebar_width(&self) -> f32 {
+        panic!("sidebar fallo");
+    }
+
+    fn top_bar_height(&self) -> f32 {
+        panic!("top bar fallo");
+    }
+
+    fn left_sidebar(&self) -> Option<gpui::AnyElement> {
+        panic!("sidebar fallo");
+    }
+}
+
+impl SpaceHook for PanickingPlugin {
+    fn active_session(&self) -> usize {
+        panic!("sesion activa fallo");
+    }
+
+    fn take_new_session_request(&self) -> bool {
+        panic!("peticion de sesion fallo");
+    }
+
+    fn on_session_created(&self, _session_id: usize) {
+        panic!("notificacion fallo");
+    }
+}
+
+impl LifecycleHook for PanickingPlugin {
+    fn on_close_request(&self) -> CloseDecision {
+        panic!("decision de cierre fallo");
+    }
+}
+
+impl Plugin for PanickingPlugin {
+    fn id(&self) -> &'static str {
+        "panicking"
+    }
+
+    fn name(&self) -> &'static str {
+        "Panicking"
+    }
+
+    fn appearance_hook(&self) -> Option<&dyn AppearanceHook> {
+        Some(self)
+    }
+
+    fn input_hook(&self) -> Option<&dyn InputHook> {
+        Some(self)
+    }
+
+    fn layout_hook(&self) -> Option<&dyn LayoutHook> {
+        Some(self)
+    }
+
+    fn space_hook(&self) -> Option<&dyn SpaceHook> {
+        Some(self)
+    }
+
+    fn lifecycle_hook(&self) -> Option<&dyn LifecycleHook> {
+        Some(self)
+    }
+}
+
+/// Plugin sano que veta el cierre de la ventana.
+struct MockCloseGuardPlugin;
+
+impl LifecycleHook for MockCloseGuardPlugin {
+    fn on_close_request(&self) -> CloseDecision {
+        CloseDecision::Confirm
+    }
+}
+
+impl Plugin for MockCloseGuardPlugin {
+    fn id(&self) -> &'static str {
+        "close-guard"
+    }
+
+    fn name(&self) -> &'static str {
+        "Close Guard"
+    }
+
+    fn lifecycle_hook(&self) -> Option<&dyn LifecycleHook> {
+        Some(self)
+    }
+}
+
+#[test]
+fn a_panicking_plugin_cannot_take_down_the_terminal() {
+    let mut registry = PluginRegistry::new();
+    registry.register(PanickingPlugin);
+
+    // Cada llamada ejecuta código de plugin que entra en pánico. Si el
+    // aislamiento fallara, ninguna llegaría aquí.
+    assert_eq!(
+        registry.effective_opacity(),
+        1.0,
+        "debe quedar opaco, no sin valor"
+    );
+    assert_eq!(registry.effective_font_family("Fira Code"), "Fira Code");
+    assert_eq!(registry.left_sidebar_width(), 0.0);
+    assert_eq!(registry.top_bar_height(), 0.0);
+    assert_eq!(registry.dispatch_key(&Key::new("a")), KeyAction::Pass);
+    registry.on_session_created(1);
+    registry.on_session_closed(1);
+    registry.take_new_session_request();
+}
+
+#[test]
+fn a_panicking_plugin_does_not_stop_the_others_from_working() {
+    let mut registry = PluginRegistry::new();
+    // El que revienta va primero: si contaminara el estado, el segundo no
+    // llegaría a ejecutarse.
+    registry.register(PanickingPlugin);
+    registry.register(MockTintPlugin);
+
+    assert_eq!(
+        registry.effective_background(Rgb::new(0, 0, 0)),
+        Rgb::new(20, 30, 40),
+        "el plugin sano debe seguir aportando lo suyo"
+    );
+}
+
+#[test]
+fn a_panicking_plugin_does_not_block_the_close_guard() {
+    let mut registry = PluginRegistry::new();
+    registry.register(PanickingPlugin);
+    registry.register(MockCloseGuardPlugin);
+
+    // El guard veta el cierre. Un pánico previo no debe convertir el veto en
+    // "dejar cerrar": se perderían procesos en ejecución.
+    assert_eq!(registry.close_decision(), CloseDecision::Confirm);
 }

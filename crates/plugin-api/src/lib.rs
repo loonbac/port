@@ -364,6 +364,27 @@ pub struct PluginRegistry {
     services: Arc<Services>,
 }
 
+/// Ejecuta un hook de plugin aislando su pánico.
+///
+/// Un plugin es código de terceros dentro de la terminal. Si su hook entra en
+/// pánico, el desenrollado sube por el manejador de teclado o por el render de
+/// GPUI y se lleva la terminal por delante: el usuario pierde su sesión entera
+/// por un fallo en una extensión.
+///
+/// Aquí el pánico se corta en la frontera y el plugin pasa a no aportar nada,
+/// que es justo lo que significa estar deshabilitado. El resto de la terminal
+/// sigue viva.
+///
+/// El hook de pánico global no se toca a propósito: silenciar el aviso
+/// escondería el fallo de quien está desarrollando el plugin, y el aviso por
+/// stderr es la única pista que le queda.
+fn guarded<T>(fallback: T, call: impl FnOnce() -> T) -> T {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(call)) {
+        Ok(value) => value,
+        Err(_) => fallback,
+    }
+}
+
 impl PluginRegistry {
     /// Crea un registro de plugins vacío.
     pub fn new() -> Self {
@@ -470,7 +491,7 @@ impl PluginRegistry {
                 continue;
             }
             if let Some(hook) = entry.plugin.appearance_hook() {
-                if let Some(op) = hook.opacity() {
+                if let Some(op) = guarded(None, || hook.opacity()) {
                     min_opacity = min_opacity.min(op.clamp(0.0, 1.0));
                 }
             }
@@ -485,7 +506,7 @@ impl PluginRegistry {
                 continue;
             }
             if let Some(hook) = entry.plugin.appearance_hook() {
-                base = hook.background_tint(base);
+                base = guarded(base, || hook.background_tint(base));
             }
         }
         base
@@ -498,7 +519,7 @@ impl PluginRegistry {
                 continue;
             }
             if let Some(hook) = entry.plugin.appearance_hook() {
-                if let Some(family) = hook.font_family() {
+                if let Some(family) = guarded(None, || hook.font_family()) {
                     return family;
                 }
             }
@@ -513,7 +534,7 @@ impl PluginRegistry {
                 continue;
             }
             if let Some(hook) = entry.plugin.appearance_hook() {
-                if let Some(size) = hook.font_size() {
+                if let Some(size) = guarded(None, || hook.font_size()) {
                     return size;
                 }
             }
@@ -529,7 +550,7 @@ impl PluginRegistry {
                 continue;
             }
             if let Some(hook) = entry.plugin.appearance_hook() {
-                if let Some(fbs) = hook.font_fallbacks() {
+                if let Some(fbs) = guarded(None, || hook.font_fallbacks()) {
                     fallbacks.extend(fbs);
                 }
             }
@@ -551,7 +572,7 @@ impl PluginRegistry {
                 continue;
             }
             if let Some(hook) = entry.plugin.input_hook() {
-                if hook.on_key(key) == KeyAction::Consume {
+                if guarded(KeyAction::Pass, || hook.on_key(key)) == KeyAction::Consume {
                     return KeyAction::Consume;
                 }
             }
@@ -564,7 +585,11 @@ impl PluginRegistry {
         self.plugins
             .iter()
             .filter(|p| p.enabled)
-            .filter_map(|p| p.plugin.layout_hook().map(|h| h.top_bar_height()))
+            .filter_map(|p| {
+                p.plugin
+                    .layout_hook()
+                    .map(|h| guarded(0.0, || h.top_bar_height()))
+            })
             .fold(0.0f32, f32::max)
     }
 
@@ -573,7 +598,11 @@ impl PluginRegistry {
         self.plugins
             .iter()
             .filter(|p| p.enabled)
-            .filter_map(|p| p.plugin.layout_hook().map(|h| h.left_sidebar_width()))
+            .filter_map(|p| {
+                p.plugin
+                    .layout_hook()
+                    .map(|h| guarded(0.0, || h.left_sidebar_width()))
+            })
             .fold(0.0f32, f32::max)
     }
 
@@ -582,7 +611,11 @@ impl PluginRegistry {
         self.plugins
             .iter()
             .filter(|p| p.enabled)
-            .filter_map(|p| p.plugin.layout_hook().map(|h| h.bottom_bar_height()))
+            .filter_map(|p| {
+                p.plugin
+                    .layout_hook()
+                    .map(|h| guarded(0.0, || h.bottom_bar_height()))
+            })
             .fold(0.0f32, f32::max)
     }
 
@@ -591,7 +624,7 @@ impl PluginRegistry {
         for entry in &self.plugins {
             if entry.enabled {
                 if let Some(hook) = entry.plugin.space_hook() {
-                    return hook.active_session();
+                    return guarded(0, || hook.active_session());
                 }
             }
         }
@@ -603,7 +636,7 @@ impl PluginRegistry {
         for entry in &self.plugins {
             if entry.enabled {
                 if let Some(hook) = entry.plugin.space_hook() {
-                    return hook.active_space();
+                    return guarded(0, || hook.active_space());
                 }
             }
         }
@@ -615,7 +648,7 @@ impl PluginRegistry {
         for entry in &self.plugins {
             if entry.enabled {
                 if let Some(hook) = entry.plugin.space_hook() {
-                    if hook.take_new_session_request() {
+                    if guarded(false, || hook.take_new_session_request()) {
                         return true;
                     }
                 }
@@ -629,7 +662,7 @@ impl PluginRegistry {
         for entry in &self.plugins {
             if entry.enabled {
                 if let Some(hook) = entry.plugin.space_hook() {
-                    hook.on_session_created(session_id);
+                    guarded((), || hook.on_session_created(session_id));
                 }
             }
         }
@@ -640,7 +673,7 @@ impl PluginRegistry {
         for entry in &self.plugins {
             if entry.enabled {
                 if let Some(hook) = entry.plugin.space_hook() {
-                    hook.update_session_cwd(session_id, cwd, folder_name);
+                    guarded((), || hook.update_session_cwd(session_id, cwd, folder_name));
                 }
             }
         }
@@ -651,7 +684,7 @@ impl PluginRegistry {
         for entry in &self.plugins {
             if entry.enabled {
                 if let Some(hook) = entry.plugin.space_hook() {
-                    hook.update_session_app(session_id, app);
+                    guarded((), || hook.update_session_app(session_id, app));
                 }
             }
         }
@@ -662,7 +695,7 @@ impl PluginRegistry {
         for entry in &self.plugins {
             if entry.enabled {
                 if let Some(hook) = entry.plugin.space_hook() {
-                    if let Some(idx) = hook.take_close_session_request() {
+                    if let Some(idx) = guarded(None, || hook.take_close_session_request()) {
                         return Some(idx);
                     }
                 }
@@ -677,7 +710,9 @@ impl PluginRegistry {
         for entry in &self.plugins {
             if entry.enabled {
                 if let Some(hook) = entry.plugin.lifecycle_hook() {
-                    if hook.on_close_request() == CloseDecision::Confirm {
+                    if guarded(CloseDecision::Allow, || hook.on_close_request())
+                        == CloseDecision::Confirm
+                    {
                         return CloseDecision::Confirm;
                     }
                 }
@@ -691,7 +726,7 @@ impl PluginRegistry {
         for entry in &self.plugins {
             if entry.enabled {
                 if let Some(hook) = entry.plugin.space_hook() {
-                    hook.on_session_closed(session_id);
+                    guarded((), || hook.on_session_closed(session_id));
                 }
             }
         }
@@ -702,7 +737,7 @@ impl PluginRegistry {
         for entry in &self.plugins {
             if entry.enabled {
                 if let Some(hook) = entry.plugin.lifecycle_hook() {
-                    hook.on_close_confirmed();
+                    guarded((), || hook.on_close_confirmed());
                 }
             }
         }
@@ -726,7 +761,7 @@ impl PluginRegistry {
                 continue;
             }
             if let Some(hook) = entry.plugin.layout_hook() {
-                if let Some(elem) = hook.top_bar() {
+                if let Some(elem) = guarded(None, || hook.top_bar()) {
                     elements.push(elem);
                 }
             }
@@ -742,7 +777,7 @@ impl PluginRegistry {
                 continue;
             }
             if let Some(hook) = entry.plugin.layout_hook() {
-                if let Some(elem) = hook.left_sidebar() {
+                if let Some(elem) = guarded(None, || hook.left_sidebar()) {
                     elements.push(elem);
                 }
             }
@@ -758,7 +793,7 @@ impl PluginRegistry {
                 continue;
             }
             if let Some(hook) = entry.plugin.layout_hook() {
-                if let Some(elem) = hook.bottom_bar() {
+                if let Some(elem) = guarded(None, || hook.bottom_bar()) {
                     elements.push(elem);
                 }
             }
