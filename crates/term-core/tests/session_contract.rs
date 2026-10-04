@@ -47,6 +47,15 @@ fn text_of(session: &Session) -> String {
         .join("\n")
 }
 
+/// Busca un ejecutable en el PATH, como hace una shell.
+fn which(bin: &str) -> Option<String> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(bin))
+        .find(|candidate| candidate.is_file())
+        .map(|candidate| candidate.to_string_lossy().to_string())
+}
+
 /// Regresión del cuelgue de 39 minutos: `pump` no puede bloquearse esperando
 /// salida que no llega. Si vuelve a pasar, este test lo dice en un segundo.
 #[test]
@@ -179,8 +188,21 @@ fn cursor_key_mode_is_normal_until_the_program_enables_application_keys() {
 
 #[test]
 fn fish_device_queries_are_replied_automatically_without_blocking() {
+    // La ruta de fish esta cableada a NixOS, asi que el test no puede
+    // correr en un runner de GitHub, que no tiene /run/current-system. Se
+    // busca en el PATH y, si no esta, el test se salta en lugar de fallar
+    // por una dependencia del entorno.
+    let Some(fish) = std::env::var("SHELL")
+        .ok()
+        .filter(|shell| shell.ends_with("fish"))
+        .or_else(|| which("fish"))
+    else {
+        eprintln!("fish no esta disponible: se omite el test");
+        return;
+    };
+
     let config = PtyConfig {
-        command: "/run/current-system/sw/bin/fish".to_string(),
+        command: fish,
         args: vec!["-l".to_string()],
         cwd: None,
     };
