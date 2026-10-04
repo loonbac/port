@@ -49,7 +49,7 @@ export DEBIAN_FRONTEND=noninteractive
 
 apt-get update
 apt-get install -y --no-install-recommends \
-  ca-certificates curl build-essential pkg-config cmake nasm \
+  ca-certificates curl build-essential bash pkg-config cmake nasm \
   python3 patchelf xz-utils \
   libxcb1-dev libxcb-xkb-dev libxkbcommon-dev libxkbcommon-x11-dev \
   libwayland-dev libvulkan-dev libfreetype-dev \
@@ -99,8 +99,11 @@ echo "==> Interprete: $interp"
 # dos pasos mas tarde, muy lejos de su causa: libxcb.so.1 si esta en Ubuntu
 # por casualidad, asi que una se copiaba y la otra no, y parecian un problema
 # de nombres en vez de de sitio.
-echo "==> Empaquetando"
-sh /src/scripts/bundle.sh --from portable
+# Con `bash` explicito: `/bin/sh` en Debian es dash y no conoce `pipefail`,
+  # que bundle.sh necesita. Es el mismo motivo por el que el job de CI declara
+  # `shell: bash`.
+  echo "==> Empaquetando"
+  bash /src/scripts/bundle.sh --from portable
 DOCKER
 }
 
