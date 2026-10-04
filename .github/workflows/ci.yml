@@ -106,6 +106,16 @@ jobs:
             'sandbox = true' \
             > "$HOME_DIR/.config/nix/nix.conf"
 
+          # El instalador single-user intenta crear /nix con sudo. Las
+          # imagenes base de los contenedores no traen sudo, y sin el la
+          # instalacion aborta. Crear el directorio de antemano hace que el
+          # instalador se lo salte.
+          if [ "$(id -u)" = "0" ]; then
+            mkdir -p /nix && chown root /nix
+          elif ! command -v sudo >/dev/null 2>&1; then
+            apt-get update && apt-get install -y --no-install-recommends sudo
+          fi
+
           # Solo https: nunca curl sobre http en una imagen de CI.
           curl -fsSL --proto '=https' --tlsv1.2 https://nixos.org/nix/install \
             | sh -s -- --no-daemon

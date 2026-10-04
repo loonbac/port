@@ -104,6 +104,57 @@ jobs:
           path: dist/${{ env.BIN }}
           if-no-files-found: error
 
+  # Binario portable: compilado en Docker contra un glibc antiguo para que
+  # arranque en la mayor parte de distribuciones, con las librerias de GPU
+  # empaquetadas al lado y RUNPATH relativo.
+  portable:
+    name: bundle portable
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Retirar parches locales
+        run: ./scripts/disable-local-patch.sh
+
+      # Docker viene preinstalado en los runners de Ubuntu, asi que el bundle
+      # se compila igual para todos los usuarios con independencia de su
+      # toolchain local.
+      - name: Compilar bundle portable
+        run: ./scripts/build-portable.sh
+
+      - name: Paquetes nativos
+        run: |
+          set -eu
+          ./scripts/package.sh deb || true
+          ./scripts/package.sh rpm || true
+
+      - name: Comprobar el bundle
+        run: |
+          set -eu
+          BUNDLE="$(echo dist/port-*-linux-x86_64)"
+          echo "Bundle: $BUNDLE"
+          # El intérprete no debe apuntar al store: es lo que hace portable
+          # al binario fuera de Nix.
+          interp="$(readelf -l "$BUNDLE/bin/port" | sed -n 's/.*interpreter: \(.*\)\]/\1/p')"
+          case "$interp" in
+            /nix/store/*) echo "::error::el intérprete sigue en el store"; exit 1 ;;
+          esac
+          echo "Intérprete: $interp"
+
+      - name: Subir artefactos
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: release-portable
+          path: dist/
+          if-no-files-found: error
+
   packages:
     name: packages / ${{ matrix.package }}
     runs-on: ubuntu-24.04
@@ -148,7 +199,7 @@ jobs:
   publish:
     name: publicar release
     runs-on: ubuntu-24.04
-    needs: [linux-binary, packages]
+    needs: [linux-binary, portable, packages]
     if: startsWith(github.ref, 'refs/tags/')
     timeout-minutes: 20
     # Único job con permiso de escritura.

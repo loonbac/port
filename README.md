@@ -77,15 +77,30 @@ opacity and which plugins are enabled.
 
 ## Installation
 
-The portable way, which works on any Linux distribution, macOS and Windows
-that has [Nix](https://nixos.org/download):
+### Portable bundle (recommended)
+
+No Nix, no packages to install. Download the `port-<version>-linux-x86_64`
+directory from the release, unpack it anywhere and run `bin/port`:
 
 ```bash
-nix profile install github:loonbac/port
-port
+tar xf port-*.tar.gz
+./port-*/bin/port
 ```
 
-From a release, with the native package manager of your distribution:
+To install it under `~/.local`:
+
+```bash
+./port-*/INSTALL.sh
+```
+
+The bundle ships the X11/xkb libraries that GPUI links against and loads
+Wayland, Vulkan and FreeType at runtime, all inside `lib/`. The one thing it
+cannot ship is your GPU driver: Vulkan has to find the ICD that matches your
+card, and that is a property of the machine, not of the terminal.
+
+Only the driver needs to be present. The rest travels with the app.
+
+### Native packages
 
 ```bash
 # Debian / Ubuntu
@@ -93,12 +108,23 @@ sudo apt install ./port.deb
 
 # Fedora / RHEL
 sudo dnf install ./port.rpm
-
-# Arch
-sudo pacman -U ./port.pkg.tar.zst
 ```
 
-Requirements at runtime: a Wayland or X11 session and Vulkan.
+### Nix (optional)
+
+```bash
+nix profile install github:loonbac/port
+```
+
+Useful on NixOS, and for reproducible builds. It is **not** required: a binary
+built through Nix carries the store's dynamic loader inside it, so it runs on
+NixOS and nowhere else. The portable bundle is built inside Debian 12 against
+glibc 2.36 instead, which is why it runs on Ubuntu 22.04 and later, Fedora 36
+and later, and RHEL/Rocky 9.
+
+### Requirements
+
+A Wayland or X11 session and a working Vulkan driver.
 
 ## Building
 
