@@ -107,6 +107,13 @@ echo "==> Interprete: $interp"
   # `shell: bash`.
   echo "==> Empaquetando"
   bash /src/scripts/bundle.sh --from portable
+
+  # El bundle se escribe como root dentro del contenedor, sobre un volumen
+  # montado del host. Ahi queda con permisos de root y despues ningun paso
+  # del runner puede moverlo ni borrarlo:
+  #   rm: cannot remove 'dist/.../bin/port': Permission denied
+  # Se abre el permisos aqui, que es el ultimo momento en que se es root.
+  chmod -R a+rwX /src/dist
 DOCKER
 }
 

@@ -22,6 +22,12 @@ for candidate in "result/bin/$BIN" "target/portable/bin/$BIN" "target/release/$B
     break
   fi
 done
+
+# Ultimo recurso: el artefacto descargado puede traer el binario un nivel mas
+# abajo segun como se creo. Antes de adivinar rutas, se busca.
+if [ -z "$BINARY" ]; then
+  BINARY="$(find . -maxdepth 4 -type f -name "$BIN" -perm -u+x 2>/dev/null | head -1)"
+fi
 DIST="dist"
 PKG_NAME="port"
 
