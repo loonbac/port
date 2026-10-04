@@ -248,14 +248,22 @@ main() {
     fi
   fi
 
+  mkdir -p "$BUNDLE/share/icons/hicolor/256x256/apps" "$BUNDLE/share/pixmaps"
+  cp "$ROOT/assets/icon-256.png" "$BUNDLE/share/icons/hicolor/256x256/apps/$BIN.png" 2>/dev/null || true
+  cp "$ROOT/assets/icon-256.png" "$BUNDLE/share/pixmaps/$BIN.png" 2>/dev/null || true
+
   cat > "$BUNDLE/share/applications/$BIN.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
 Name=PORT
+GenericName=Terminal Emulator
 Comment=Plugin-Oriented Rust Terminal
 Exec=$BUNDLE/bin/$BIN
+Icon=$BIN
 Terminal=false
 Categories=System;TerminalEmulator;
+Keywords=terminal;shell;prompt;command;
+StartupNotify=true
 DESKTOP
 
   cp README.md "$BUNDLE/share/doc/port/" 2>/dev/null || true
@@ -273,6 +281,10 @@ rm -rf "$DEST"
 cp -r "$SRC" "$DEST"
 mkdir -p "$HOME/.local/bin"
 ln -sf "$DEST/bin/port" "$HOME/.local/bin/port"
+mkdir -p "$HOME/.local/share/applications" "$HOME/.local/share/icons/hicolor/256x256/apps" "$HOME/.local/share/pixmaps"
+ln -sf "$DEST/share/applications/port.desktop" "$HOME/.local/share/applications/port.desktop" 2>/dev/null || true
+ln -sf "$DEST/share/icons/hicolor/256x256/apps/port.png" "$HOME/.local/share/icons/hicolor/256x256/apps/port.png" 2>/dev/null || true
+ln -sf "$DEST/share/pixmaps/port.png" "$HOME/.local/share/pixmaps/port.png" 2>/dev/null || true
 echo "PORT instalado. Añade ~/.local/bin al PATH si no lo está."
 INSTALL
   chmod +x "$BUNDLE/INSTALL.sh"

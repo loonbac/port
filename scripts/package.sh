@@ -49,10 +49,14 @@ cat > "$DIST/$BIN.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
 Name=PORT
+GenericName=Terminal Emulator
 Comment=Plugin-Oriented Rust Terminal
 Exec=$BIN
+Icon=$BIN
 Terminal=false
 Categories=System;TerminalEmulator;
+Keywords=terminal;shell;prompt;command;
+StartupNotify=true
 DESKTOP
 
 install_desktop() {

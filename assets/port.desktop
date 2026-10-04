@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=PORT
+GenericName=Terminal Emulator
+Comment=Plugin-Oriented Rust Terminal
+Exec=port
+Icon=port
+Terminal=false
+Categories=System;TerminalEmulator;
+Keywords=terminal;shell;prompt;command;
+StartupNotify=true
