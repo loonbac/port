@@ -33,12 +33,16 @@ PKG_NAME="port"
 
 die() { echo "error: $*" >&2; exit 1; }
 
-[ -n "$PKG" ] || die "uso: $0 <deb|rpm|arch|appimage>"
+[ -n "$PKG" ] || die "uso: $0 <deb|spec|rpm|arch|appimage>"
 [ -n "$BINARY" ] || die "no encuentro el binario en result/bin, target/portable/bin ni target/release; construye antes de empaquetar"
 echo "==> Empaquetando desde $BINARY"
 
+# No se limpia `dist` entero. En el workflow de release varios pasos escriben
+# ahi (el binario, el bundle) y cada invocacion de este script se lleva por
+# delante lo que dejaron los anteriores: se construia un .deb y acto seguido
+# se borraba. Cada empaquetado usa su propio subdirectorio de trabajo y solo
+# sustituye los ficheros que le corresponden.
 mkdir -p "$DIST"
-rm -rf "$DIST"/*
 
 # Un `.desktop` para que aparezca en los menús de las distros con GUI.
 cat > "$DIST/$BIN.desktop" <<DESKTOP
@@ -122,6 +126,35 @@ CONTROL
     else
       echo "sin dpkg-deb ni ar: se omite el .deb"
     fi
+    ;;
+
+  # `spec` genera el .spec de RPM sin construirlo. El workflow lo pide por
+  # separado porque los runners de GitHub no traen `rpmbuild`, igual que no
+  # traen `dpkg-deb`. Antes la matriz pedia `spec` y el script no lo tenia:
+  # el job moria con "paquete desconocido: spec".
+  spec)
+    SPEC="$DIST/$PKG_NAME.spec"
+    cat > "$SPEC" <<SPECFILE
+Name:           port
+Version:        $VERSION
+Release:        1%{?dist}
+Summary:        PORT: Plugin-Oriented Rust Terminal
+License:        MIT
+URL:            https://github.com/loonbac/port
+
+%description
+Terminal con GPUI y sistema de plugins.
+
+%files
+%license LICENSE
+/usr/bin/$BIN
+/usr/share/applications/$PKG_NAME.desktop
+
+%changelog
+* Thu Jan 01 1970 loonbac - $VERSION-1
+- Initial package
+SPECFILE
+    echo "construido $SPEC"
     ;;
 
   rpm)
