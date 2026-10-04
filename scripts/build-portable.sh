@@ -34,7 +34,11 @@ have_podman() { command -v podman >/dev/null 2>&1 && podman info >/dev/null 2>&1
 build_with_docker() {
   local engine="$1"
   echo "==> Compilando dentro de $IMAGE con $engine"
-  "$engine" run --rm \
+  # `-i` no es opcional: sin ella el motor no engancha stdin, el heredoc de
+  # abajo nunca llega a `sh -s` y el contenedor sale con codigo 0 sin haber
+  # compilado nada. El fallo se descubre mas tarde, cuando falta el binario,
+  # y parece un problema de empaquetado.
+  "$engine" run --rm -i \
     -v "$ROOT:/src:rw" \
     -w /src \
     -e PORT_VERSION="$VERSION" \
