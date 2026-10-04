@@ -1,4 +1,8 @@
 /target
+# El ejemplo de plugin se compila desde su propio manifiesto y therefore tiene
+# su propio target/ dentro de examples/. Sin esta linea, `git add -A` mete los
+# artefactos de compilacion en el repositorio.
+/examples/external-plugin/target/
 __pycache__/
 *.pyc
 
