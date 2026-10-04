@@ -184,9 +184,18 @@ main() {
   # resuelve bien cuando en realidad esta usando las librerias del sistema.
   local resolved
   resolved="$(LD_LIBRARY_PATH= ldd "$BUNDLE/bin/$BIN" 2>/dev/null || true)"
+
+  # ldd imprime rutas ABSOLUTAS. $BUNDLE es relativa ("dist/port-..."), asi que
+  # compararlas directamente hacia que ninguna libreria pareciera resolverse
+  # desde el bundle aunque lo hiciera: el bundle se construia bien y la
+  # comprobacion lo rechazaba por un fallo de comparacion de cadenas.
+  local bundle_abs
+  bundle_abs="$(cd "$BUNDLE" && pwd)"
+  echo "    bundle: $bundle_abs"
+
   local leaked
   leaked="$(echo "$resolved" | grep -oE '/nix/store|/usr/lib|/lib/[a-z0-9_-]+/' \
-    | grep -v "$BUNDLE" | head -3 || true)"
+    | grep -v "^$bundle_abs" | head -3 || true)"
   if [ -n "$leaked" ]; then
     echo "   AVISO: quedan dependencias del sistema:"
     echo "$resolved" | grep -E "$leaked" | sed 's/^/      /'
@@ -195,7 +204,7 @@ main() {
   # Y la prueba que de verdad importa: que las cuatro Criticas resuelvan desde lib/.
   local missing=0
   for name in libxcb.so.1 libxkbcommon.so.0 libxkbcommon-x11.so.0 libxcb-xkb.so.1; do
-    if echo "$resolved" | grep -q "$name => $BUNDLE"; then
+    if echo "$resolved" | grep -q "$name => $bundle_abs"; then
       echo "    $name -> bundle"
     else
       echo "    $name -> NO resuelve desde el bundle"
