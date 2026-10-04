@@ -35,8 +35,15 @@ plugin can replace core behaviour without the core knowing it exists.
   frames are only rebuilt when the grid actually changes.
 - **Multi-session** — every space and every tab owns an isolated PTY; background
   jobs keep running when you switch away.
-- **Plugin system** — in-process Rust traits covering appearance, input, layout,
-  session management and window lifecycle.
+- **Plugin system** — two kinds, one contract. In-process Rust traits for
+  anything that needs to draw with GPUI, and standalone processes for plugins
+  you install without rebuilding PORT.
+- **Install plugins from a repository URL** — `Ctrl` `Shift` `L`, then the
+  install entry, then paste the URL. It clones, builds and loads the plugin
+  without restarting the terminal.
+- **A plugin cannot take down the terminal** — a panicking hook is isolated,
+  and a hook that overruns its time budget is disabled instead of freezing the
+  session forever.
 - **Human-readable configuration** — one plain-text file with Markdown code
   blocks per plugin, hot-reloaded as you save.
 
@@ -44,7 +51,7 @@ plugin can replace core behaviour without the core knowing it exists.
 
 | Shortcut | Action |
 |---|---|
-| `Ctrl` `Shift` `L` | Open the plugin manager |
+| `Ctrl` `Shift` `L` | Open the plugin manager (browse, enable, install) |
 | `Ctrl` `Shift` `T` | New tab in the current space |
 | `Alt` `←` / `Alt` `→` | Switch tab |
 | `Ctrl` `W` | Close current tab |
@@ -93,8 +100,10 @@ To install it under `~/.local`:
 ./port-*/INSTALL.sh
 ```
 
-The bundle ships the X11/xkb libraries that GPUI links against and loads
-Wayland, Vulkan and FreeType at runtime, all inside `lib/`. The one thing it
+The bundle ships the X11/xkb libraries that GPUI links against, plus the
+Wayland and Vulkan loaders, all inside `lib/`. FreeType is **not** bundled:
+GPUI opens it with `dlopen` at runtime, so it is resolved from the host system
+like the Vulkan driver. The one thing it
 cannot ship is your GPU driver: Vulkan has to find the ICD that matches your
 card, and that is a property of the machine, not of the terminal.
 
@@ -138,7 +147,43 @@ cargo build --release -p port
 ./target/release/port
 ```
 
+## Installing a plugin
+
+Plugins that do not need to draw with GPUI install as standalone processes.
+Give PORT the repository URL and it clones, builds and loads the plugin:
+
+```sh
+port plugin add https://github.com/you/port-plugin-example   # a URL de un repositorio
+port plugin list
+port plugin remove example
+```
+
+The same thing works from the keyboard: `Ctrl` `Shift` `L`, pick the install
+entry, paste the URL, `Enter`. The build runs in the background — about six
+seconds for a small plugin — and the menu stays usable while it runs.
+
+A repository is a plugin when its `Cargo.toml` produces a binary and
+optionally says how to register it:
+
+```toml
+[package.metadata.port]
+id = "example"
+capabilities = ["appearance", "input"]
+```
+
+Without that section the identifier is derived from the package name.
+
+There is a complete, buildable example in
+[`examples/external-plugin/`](examples/external-plugin). The end-to-end test
+builds and runs that very example, so it cannot go stale.
+
+Loading a plugin costs 0.71 ms and each call costs 12 µs, both measured on
+this machine; see [`docs/plugin-runtime.md`](docs/plugin-runtime.md) for the
+design and the numbers.
+
 ## Writing a plugin
+
+### In-process, when you need to draw
 
 Add the plugin as a dependency and register it:
 
@@ -164,8 +209,59 @@ impl Plugin for MyPlugin {
 }
 ```
 
-Available hooks: `AppearanceHook`, `InputHook`, `LayoutHook`, `SpaceHook`,
-`PluginManagerHook` and `LifecycleHook`.
+Available hooks: `AppearanceHook`, `InputHook`, `LayoutHook`, `SpaceHook` and
+`LifecycleHook`.
+
+There is deliberately no hook for the plugin manager itself. That menu is core:
+it is the way into everything PORT can do, and it must not depend on an
+extension loading in order to be usable.
+
+### Standalone, when you do not
+
+A plugin that only adjusts values, answers key bindings or vetoes the close
+does not need to be inside the process. It ships as its own binary that talks
+JSON over stdin/stdout, and it never compiles against GPUI:
+
+```rust
+use port_plugin_sdk::protocol::{Appearance, Binding, Capability};
+use port_plugin_sdk::runtime::{serve, Plugin};
+
+struct MyPlugin;
+
+impl Plugin for MyPlugin {
+    fn name(&self) -> &'static str { "my-plugin" }
+    fn version(&self) -> &'static str { "0.1.0" }
+    fn capabilities(&self) -> Vec<Capability> { vec![Capability::Appearance] }
+    fn appearance(&self) -> Appearance {
+        Appearance { opacity: Some(0.90), ..Default::default() }
+    }
+    fn bindings(&self) -> Vec<Binding> {
+        vec![Binding { key: "k".into(), ctrl: true, alt: false,
+                       shift: false, action: "toggle".into() }]
+    }
+    fn invoke(&self, action: &str, _p: &serde_json::Value) -> Option<serde_json::Value> {
+        (action == "toggle").then(|| serde_json::json!({ "ok": true }))
+    }
+}
+
+fn main() { serve(MyPlugin); }
+```
+
+[`docs/plugin-runtime.md`](docs/plugin-runtime.md) has the protocol, the
+reasoning behind it and the trade-offs.
+
+### Which one should I write?
+
+Reach for in-process when the plugin draws: a sidebar, a status bar, anything
+that composes GPUI elements. It is the only path that can, and it is also the
+faster one.
+
+Reach for a standalone process when the plugin only moves values. It gets a
+hard kill the in-process path cannot offer, and it cannot be linked against
+PORT's internals at all. It costs one idle process, about 1 MB and 0 % CPU.
+
+Neither is a downgrade. The split exists so that plugins with UI and plugins
+from strangers can both work without compromise.
 
 ### Calling one plugin from another
 
@@ -198,12 +294,15 @@ Official plugins live in **[loonbac/port-plugins](https://github.com/loonbac/por
 | `font` | `AppearanceHook` | Font family, size and fallbacks |
 | `font-zoom` | `AppearanceHook` | Font size state and zoom operations (no key bindings) |
 | `shortcuts` | — | Bind custom key combinations to callbacks |
-| `menu-customizer` | `PluginManagerHook` | Restyle or fully replace the plugin manager |
 | `herdr` | `AppearanceHook`, `InputHook`, `LayoutHook`, `SpaceHook` | Spaces sidebar, tabs, live process detection, resizable layout, wallpaper accent colour |
 | `close-guard` | `LifecycleHook` | Asks for confirmation before closing with running processes |
 
 See the [plugins repository](https://github.com/loonbac/port-plugins) for
 detailed documentation of each one.
+
+All of these are in-process. A standalone plugin is not listed here: it is
+installed by URL and does not ship as a dependency, exactly like any plugin you
+would write yourself.
 
 ## License
 

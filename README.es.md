@@ -40,8 +40,15 @@ sin que el núcleo sepa que existe.
   cambia de verdad.
 - **Multisesión** — cada espacio y cada pestaña tiene su propio PTY aislado; los
   procesos en segundo plano siguen corriendo al cambiar.
-- **Sistema de plugins** — traits de Rust en el mismo proceso que cubren
-  apariencia, entrada, layout, gestión de sesiones y ciclo de vida de la ventana.
+- **Sistema de plugins** — dos tipos, un mismo contrato. Traits de Rust en el
+  proceso para lo que necesita dibujar con GPUI, y procesos independientes para
+  los plugins que instalas sin recompilar PORT.
+- **Instalar plugins desde la URL de un repositorio** — `Ctrl` `Shift` `L`, la
+  entrada de instalar, pegas la URL. Clona, compila y carga el plugin sin
+  reiniciar la terminal.
+- **Un plugin no puede tumbar la terminal** — un hook que entra en pánico queda
+  aislado, y uno que excede su presupuesto de tiempo se desactiva en vez de
+  congelar la sesión para siempre.
 - **Configuración legible** — un único archivo de texto plano con bloques de
   código Markdown por plugin, recargado al guardar.
 
@@ -49,7 +56,7 @@ sin que el núcleo sepa que existe.
 
 | Atajo | Acción |
 |---|---|
-| `Ctrl` `Shift` `L` | Abrir el gestor de plugins |
+| `Ctrl` `Shift` `L` | Abrir el gestor de plugins (listar, activar, instalar) |
 | `Ctrl` `Shift` `T` | Nueva pestaña en el espacio actual |
 | `Alt` `←` / `Alt` `→` | Cambiar de pestaña |
 | `Ctrl` `W` | Cerrar la pestaña actual |
@@ -100,7 +107,9 @@ Para instalarlo en `~/.local`:
 ```
 
 El bundle incluye las librerías de X11/xkb contra las que GPUI enlaza, y carga
-Wayland, Vulkan y FreeType en tiempo de ejecución, todo dentro de `lib/`. Lo
+Wayland y Vulkan en tiempo de ejecución, todo dentro de `lib/`. **FreeType no
+se empaqueta**: GPUI la abre con `dlopen` en tiempo de ejecución, así que se
+resuelve desde el sistema anfitrión igual que el driver de Vulkan. Lo
 único que no puede empaquetar es tu driver de GPU: Vulkan tiene que encontrar el
 ICD que corresponde a tu tarjeta, y eso es una propiedad de la máquina, no de la
 terminal.
@@ -145,7 +154,44 @@ cargo build --release -p port
 ./target/release/port
 ```
 
+## Instalar un plugin
+
+Los plugins que no necesitan dibujar con GPUI se instalan como procesos
+independientes. Dale a PORT la URL del repositorio y lo clona, compila y carga:
+
+```sh
+port plugin add https://github.com/tu/port-plugin-ejemplo
+port plugin list
+port plugin remove ejemplo
+```
+
+Lo mismo funciona desde el teclado: `Ctrl` `Shift` `L`, eliges la entrada de
+instalar, pegas la URL y pulsas `Enter`. La compilación corre en segundo plano
+—unos seis segundos para un plugin pequeño— y el menú sigue usable mientras
+ocurre.
+
+Un repositorio es un plugin cuando su `Cargo.toml` produce un binario y,
+opcionalmente, dice cómo registrarse:
+
+```toml
+[package.metadata.port]
+id = "ejemplo"
+capabilities = ["appearance", "input"]
+```
+
+Sin esa sección, el identificador se deduce del nombre del paquete.
+
+Hay un ejemplo completo y compilable en
+[`examples/external-plugin/`](examples/external-plugin). La prueba de extremo a
+extremo compila y ejecuta ese mismo ejemplo, así que no puede quedarse obsoleto.
+
+Cargar un plugin cuesta 0,71 ms y cada invocación 12 µs, medido en esta máquina;
+el diseño y las cifras están en
+[`docs/plugin-runtime.md`](docs/plugin-runtime.md).
+
 ## Escribir un plugin
+
+### En el proceso, cuando necesitas dibujar
 
 Añade el plugin como dependencia y regístralo:
 
@@ -172,7 +218,56 @@ impl Plugin for MiPlugin {
 ```
 
 Hooks disponibles: `AppearanceHook`, `InputHook`, `LayoutHook`, `SpaceHook`,
-`PluginManagerHook` y `LifecycleHook`.
+`SpaceHook` y `LifecycleHook`.
+
+### Independiente, cuando no lo necesitas
+
+Un plugin que solo ajusta valores, responde a atajos o veta el cierre no
+necesita vivir en el proceso. Se distribuye como su propio binario que habla
+JSON por stdin/stdout, y nunca compila contra GPUI:
+
+```rust
+use port_plugin_sdk::protocol::{Appearance, Binding, Capability};
+use port_plugin_sdk::runtime::{serve, Plugin};
+
+struct MiPlugin;
+
+impl Plugin for MiPlugin {
+    fn name(&self) -> &'static str { "mi-plugin" }
+    fn version(&self) -> &'static str { "0.1.0" }
+    fn capabilities(&self) -> Vec<Capability> { vec![Capability::Appearance] }
+    fn appearance(&self) -> Appearance {
+        Appearance { opacity: Some(0.90), ..Default::default() }
+    }
+    fn bindings(&self) -> Vec<Binding> {
+        vec![Binding { key: "k".into(), ctrl: true, alt: false,
+                       shift: false, action: "alternar".into() }]
+    }
+    fn invoke(&self, action: &str, _p: &serde_json::Value) -> Option<serde_json::Value> {
+        (action == "alternar").then(|| serde_json::json!({ "ok": true }))
+    }
+}
+
+fn main() { serve(MiPlugin); }
+```
+
+[`docs/plugin-runtime.md`](docs/plugin-runtime.md) tiene el protocolo, el
+razonamiento detrás de él y los compromisos que implica.
+
+### ¿Cuál de los dos debería escribir?
+
+Elige en el proceso cuando el plugin dibuja: una barra lateral, una barra de
+estado, cualquier cosa que componga elementos de GPUI. Es el único camino que
+puede, y también es el más rápido.
+
+Elige un proceso independiente cuando el plugin solo mueve valores. Gana un
+`kill` duro que el camino en el proceso no puede ofrecer, y no puede enlazarse
+contra los internos de PORT. Cuesta un proceso en reposo: alrededor de 1 MB y
+0 % de CPU.
+
+Ninguno de los dos es una versión recortada. La división existe para que los
+plugins con interfaz y los plugins de desconocidos funcionen ambos sin
+renunciar a nada.
 
 ### Llamar a un plugin desde otro
 
@@ -206,7 +301,6 @@ forma independiente.
 | `font` | `AppearanceHook` | Familia, tamaño y fuentes de respaldo |
 | `font-zoom` | `AppearanceHook` | Estado del tamaño de fuente y operaciones de zoom (sin atajos) |
 | `shortcuts` | — | Asocia combinaciones de teclas a callbacks |
-| `menu-customizer` | `PluginManagerHook` | Reestiliza o reemplaza el gestor de plugins |
 | `herdr` | `AppearanceHook`, `InputHook`, `LayoutHook`, `SpaceHook` | Barra lateral de espacios, pestañas, detección de procesos en vivo, ancho ajustable y color acento del wallpaper |
 | `close-guard` | `LifecycleHook` | Pide confirmación antes de cerrar si hay procesos corriendo |
 

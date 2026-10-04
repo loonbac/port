@@ -148,6 +148,133 @@ fn candidate_paths(dir: &Path, name: &str) -> Vec<PathBuf> {
     ]
 }
 
+/// Clona un repositorio en `destino`.
+///
+/// Sin historial: la compilacion necesita el contenido, no la historia, y un
+/// clon completo de un repositorio largo es una espera de sobra.
+fn clone(url: &str, destino: &Path) -> Result<(), InstallError> {
+    let clone = Command::new("git")
+        .args([
+            "clone",
+            "--depth",
+            "1",
+            "--quiet",
+            url,
+            &destino.to_string_lossy(),
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| InstallError::Clone {
+            url: url.to_string(),
+            source: e,
+        })?;
+    if clone.status.success() {
+        Ok(())
+    } else {
+        Err(InstallError::Clone {
+            url: url.to_string(),
+            source: std::io::Error::other(String::from_utf8_lossy(&clone.stderr).trim()),
+        })
+    }
+}
+
+/// Copia un arbol de directorios, saltando lo que cargo ya genera.
+///
+/// `target/` no se copia: puede pesar mas que el propio plugin y siempre se
+/// reconstruye en el siguiente paso.
+fn copy_tree(from: &Path, to: &Path) -> Result<(), InstallError> {
+    let entries = std::fs::read_dir(from).map_err(|e| InstallError::Clone {
+        url: from.display().to_string(),
+        source: e,
+    })?;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        if name == "target" || name == ".git" {
+            continue;
+        }
+        let from_path = entry.path();
+        let to_path = to.join(&name);
+        if from_path.is_dir() {
+            std::fs::create_dir_all(&to_path).map_err(|e| InstallError::Clone {
+                url: from_path.display().to_string(),
+                source: e,
+            })?;
+            copy_tree(&from_path, &to_path)?;
+        } else {
+            std::fs::copy(&from_path, &to_path).map_err(|source_err| InstallError::Copy {
+                source: from_path.clone(),
+                source_err,
+            })?;
+        }
+    }
+    Ok(())
+}
+
+/// Reescribe las dependencias por ruta para que apunten al origen original.
+///
+/// Al copiar el plugin a un directorio temporal, una dependencia escrita como
+/// `path = "../crates/algo"` dejaria de resolver. Convertirla a ruta absoluta
+/// antes de compilar mantiene la copia sin perder la referencia.
+///
+/// Es una transformación deliberadamente simple: se reescribe cualquier
+/// `path = "..."` de un `Cargo.toml`, sin interpretar el resto del manifiesto.
+/// Un plugin publicado usa versiones de crates.io y no le afecta.
+fn resolve_path_dependencies(from: &Path, to: &Path) -> Result<(), InstallError> {
+    let manifest = to.join("Cargo.toml");
+    let Ok(text) = std::fs::read_to_string(&manifest) else {
+        return Ok(());
+    };
+
+    const MARKER: &str = "path = \"";
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text.as_str();
+
+    // Se recorre de ocurrencia en ocurrencia. Cortar el texto en trozos con
+    // `split_inclusive` no sirve: dos `path = "` pueden caer en el mismo trozo y
+    // la segunda se perderia.
+    while let Some(at) = rest.find(MARKER) {
+        let (before, after_marker) = rest.split_at(at);
+        let after = &after_marker[MARKER.len()..];
+        out.push_str(before);
+        out.push_str(MARKER);
+
+        match after.find('"') {
+            Some(end) => {
+                let (value, tail) = after.split_at(end);
+                out.push_str(&rewrite_dependency_path(from, value));
+                rest = tail;
+            }
+            // Comilla sin cerrar: el manifiesto esta roto y no es asunto
+            // nuestro; se copia tal cual y que lo diga cargo.
+            None => {
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+
+    if out != text {
+        std::fs::write(&manifest, out).map_err(|e| InstallError::Clone {
+            url: from.display().to_string(),
+            source: e,
+        })?;
+    }
+    Ok(())
+}
+
+/// Convierte una ruta de dependencia que escapa del plugin en una absoluta.
+///
+/// Solo se tocan las rutas relativas que empiezan por `..`. Un
+/// `path = "src/main.rs"` de `[[bin]]` es interno: el archivo viaja con la
+/// copia y su ruta sigue siendo correcta dentro del staging.
+fn rewrite_dependency_path(from: &Path, value: &str) -> String {
+    let path = Path::new(value);
+    if !value.starts_with("..") || path.is_absolute() {
+        return value.to_string();
+    }
+    from.join(path).display().to_string()
+}
+
 /// Compila un repositorio ya clonado y devuelve el ejecutable producido.
 ///
 /// No devuelve la ruta dentro de `target/`: se deja claro que quien llama tiene
@@ -179,28 +306,19 @@ pub fn install(url: &str) -> Result<PluginManifest, InstallError> {
     let staging = std::env::temp_dir().join(format!("port-plugin-build-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&staging);
 
-    // Clone sin historial: el build necesita el contenido, no la historia, y
-    // un clon completo de un repo con historia larga es una espera de sobra.
-    let clone = Command::new("git")
-        .args([
-            "clone",
-            "--depth",
-            "1",
-            "--quiet",
-            url,
-            &staging.to_string_lossy(),
-        ])
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| InstallError::Clone {
+    // Una ruta local se copia tal cual. Es lo que hace falta al probar el
+    // plugin que se esta escribiendo, y no obliga a tener un remoto ni a
+    //commitear antes de poderlo instalar.
+    let local = Path::new(url);
+    if local.is_dir() {
+        std::fs::create_dir_all(&staging).map_err(|e| InstallError::Clone {
             url: url.to_string(),
             source: e,
         })?;
-    if !clone.status.success() {
-        return Err(InstallError::Clone {
-            url: url.to_string(),
-            source: std::io::Error::other(String::from_utf8_lossy(&clone.stderr).trim()),
-        });
+        copy_tree(local, &staging)?;
+        resolve_path_dependencies(local, &staging)?;
+    } else {
+        clone(url, &staging)?;
     }
 
     let cargo_path = staging.join("Cargo.toml");
@@ -332,6 +450,63 @@ capabilities = ["appearance", "input"]
     #[test]
     fn a_repository_without_cargo_toml_is_not_a_plugin() {
         assert!(toml::from_str::<CargoManifest>("").is_err());
+    }
+
+    #[test]
+    fn a_local_path_install_rewrites_escaping_dependencies() {
+        // El caso que Rompio la documentacion: al copiar un plugin con una
+        // dependencia `path = "../..."`, esa ruta deja de resolver en el
+        // staging y hay que apuntarla al origen.
+        let from = std::env::temp_dir().join(format!("port-from-{}", std::process::id()));
+        let to = std::env::temp_dir().join(format!("port-to-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&from);
+        let _ = std::fs::remove_dir_all(&to);
+        std::fs::create_dir_all(&from).unwrap();
+        std::fs::create_dir_all(&to).unwrap();
+        std::fs::write(
+            from.join("Cargo.toml"),
+            "[[bin]]\nname = \"x\"\npath = \"src/main.rs\"\n\n             [dependencies]\nsdk = { path = \"../crates/sdk\" }\n",
+        )
+        .unwrap();
+
+        copy_tree(&from, &to).unwrap();
+        resolve_path_dependencies(&from, &to).unwrap();
+
+        let staged = std::fs::read_to_string(to.join("Cargo.toml")).unwrap();
+        assert!(
+            staged.contains(&from.join("../crates/sdk").display().to_string()),
+            "la dependencia que escapa debe volverse absoluta: {staged}"
+        );
+        assert!(
+            staged.contains(r#"path = "src/main.rs""#),
+            "el path de [[bin]] es interno y no debe tocarse: {staged}"
+        );
+
+        let _ = std::fs::remove_dir_all(&from);
+        let _ = std::fs::remove_dir_all(&to);
+    }
+
+    #[test]
+    fn copying_a_tree_skips_build_output() {
+        let from = std::env::temp_dir().join(format!("port-skip-{}", std::process::id()));
+        let to = std::env::temp_dir().join(format!("port-skip-to-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&from);
+        std::fs::create_dir_all(from.join("src")).unwrap();
+        std::fs::create_dir_all(from.join("target")).unwrap();
+        std::fs::create_dir_all(to.clone()).unwrap();
+        std::fs::write(from.join("src/main.rs"), "fn main() {}").unwrap();
+        std::fs::write(from.join("target/big.bin"), "pesado").unwrap();
+
+        copy_tree(&from, &to).unwrap();
+
+        assert!(to.join("src/main.rs").is_file());
+        assert!(
+            !to.join("target").exists(),
+            "target/ no debe copiarse: pesa mas que el plugin y se reconstruye"
+        );
+
+        let _ = std::fs::remove_dir_all(&from);
+        let _ = std::fs::remove_dir_all(&to);
     }
 
     #[test]

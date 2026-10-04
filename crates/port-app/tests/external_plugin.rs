@@ -27,70 +27,44 @@ fn scratch(name: &str) -> PathBuf {
     dir
 }
 
-/// Compila un plugin minimo que devuelve un valor conocido.
-fn build_probe(root: &Path) -> Option<PathBuf> {
+/// Compila el plugin de ejemplo del propio repositorio.
+///
+/// Se usa el ejemplo real, no un plugin inventado aqui a proposito: asi el
+/// ejemplo del que habla la documentacion es el mismo que verifica la suite, y
+/// no puede quedarse obsoleto en silencio mientras los tests siguen verdes.
+///
+/// Devuelve `None` si no hay compilador, en cuyo caso la prueba se omite: en
+/// una imagen minima fallaria por motivos que no dicen nada del diseno.
+fn build_example(root: &Path) -> Option<PathBuf> {
     let cargo = cargo()?;
-    let src = root.join("probe-plugin");
-    std::fs::create_dir_all(src.join("src")).ok()?;
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let example = manifest_dir.join("../../examples/external-plugin/Cargo.toml");
+    assert!(
+        example.is_file(),
+        "el ejemplo deberia existir en examples/external-plugin"
+    );
+    let example = example.canonicalize().ok()?;
 
-    let sdk = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()?
-        .join("plugin-sdk")
-        .canonicalize()
-        .ok()?;
-
-    std::fs::write(
-        src.join("Cargo.toml"),
-        format!(
-            "[package]\nname = \"port-plugin-probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
-             [package.metadata.port]\nid = \"probe\"\ncapabilities = [\"appearance\", \"input\"]\n\n\
-             [[bin]]\nname = \"port-plugin-probe\"\npath = \"src/main.rs\"\n\n\
-             [dependencies]\nport-plugin-sdk = {{ path = {sdk:?} }}\nserde_json = \"1\"\n"
-        ),
-    )
-    .ok()?;
-
-    std::fs::write(
-        src.join("src/main.rs"),
-        r#"use port_plugin_sdk::protocol::{Appearance, Binding, Capability};
-use port_plugin_sdk::runtime::{serve, Plugin};
-use std::collections::BTreeMap;
-
-struct Probe;
-impl Plugin for Probe {
-    fn name(&self) -> &'static str { "probe" }
-    fn version(&self) -> &'static str { "0.1.0" }
-    fn capabilities(&self) -> Vec<Capability> { vec![Capability::Appearance, Capability::Input] }
-    fn appearance(&self) -> Appearance {
-        Appearance { opacity: Some(0.87), ..Default::default() }
-    }
-    fn bindings(&self) -> Vec<Binding> {
-        vec![Binding { key: "p".into(), ctrl: true, alt: false, shift: true, action: "ping".into() }]
-    }
-    fn invoke(&self, action: &str, _p: &serde_json::Value) -> Option<serde_json::Value> {
-        (action == "ping").then(|| serde_json::json!({ "pong": 42 }))
-    }
-    fn configure(&mut self, v: &BTreeMap<String, String>) {
-        if let Some(o) = v.get("opacity").and_then(|x| x.parse::<f32>().ok()) {
-            eprintln!("probe: opacidad {o}");
-        }
-    }
-}
-fn main() { serve(Probe); }
-"#,
-    )
-    .ok()?;
-
+    // Target propio: el ejemplo esta fuera del workspace y no debe ensuciar el
+    // `target/` compartido, que se limpia por la suite.
+    let target = root.join("example-target");
     let built = Command::new(cargo)
-        .current_dir(&src)
+        .current_dir(root)
         .args(["build", "--release", "--quiet"])
+        .env("CARGO_TARGET_DIR", &target)
+        .args(["--manifest-path", &example.to_string_lossy()])
         .stdin(Stdio::null())
         .output()
         .ok()?;
-    built
-        .status
-        .success()
-        .then(|| src.join("target/release/port-plugin-probe"))
+    if !built.status.success() {
+        eprintln!(
+            "el plugin de ejemplo no compilo:\n{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        return None;
+    }
+    let binary = target.join("release/port-plugin-example");
+    binary.is_file().then_some(binary)
 }
 
 #[test]
@@ -101,7 +75,7 @@ fn a_real_plugin_can_be_installed_started_used_and_removed() {
     };
 
     let root = scratch("install");
-    let Some(executable) = build_probe(&root) else {
+    let Some(executable) = build_example(&root) else {
         eprintln!("el plugin de prueba no compiló: se omite");
         return;
     };
@@ -109,15 +83,15 @@ fn a_real_plugin_can_be_installed_started_used_and_removed() {
     // Instalar: copiar el binario y registrar el manifiesto, igual que
     // `port plugin add` hace tras compilar.
     host::ensure_plugins_dir().expect("directorio de plugins");
-    let destination = host::plugins_dir().join("probe");
+    let destination = host::plugins_dir().join("example");
     std::fs::copy(&executable, &destination).expect("copiar el ejecutable");
 
     let manifest = PluginManifest {
-        id: "probe".into(),
-        name: "Probe".into(),
+        id: "example".into(),
+        name: "Example".into(),
         version: "0.1.0".into(),
         executable: destination.to_string_lossy().to_string(),
-        source: "https://example.invalid/probe".into(),
+        source: "examples/external-plugin".into(),
         capabilities: vec![Capability::Appearance, Capability::Input],
     };
     host::write_manifest(&manifest).expect("registrar el manifiesto");
@@ -125,7 +99,7 @@ fn a_real_plugin_can_be_installed_started_used_and_removed() {
     // Se ve en la lista sin arrancar nada.
     let found = host::installed();
     assert!(
-        found.iter().any(|m| m.id == "probe"),
+        found.iter().any(|m| m.id == "example"),
         "debe aparecer instalado"
     );
 
@@ -135,21 +109,23 @@ fn a_real_plugin_can_be_installed_started_used_and_removed() {
     // Lo que declaró al saludar es lo que el núcleo usa.
     assert!(plugin.has(Capability::Appearance));
     assert!(plugin.has(Capability::Input));
-    assert_eq!(plugin.appearance().opacity, Some(0.87));
+    assert_eq!(plugin.appearance().opacity, Some(0.94));
     assert_eq!(plugin.bindings().len(), 1);
-    assert!(plugin.bindings()[0].matches("p", true, false, true));
+    assert!(plugin.bindings()[0].matches("h", true, true, false));
 
     // Una acción devuelve su valor.
-    let value = plugin.invoke("ping").expect("el plugin deberia responder");
-    assert_eq!(value["pong"], 42);
+    let value = plugin
+        .invoke("toggle")
+        .expect("el plugin deberia responder");
+    assert_eq!(value["triggers"], 0);
 
     // La configuración llega al plugin sin romper la conexion.
     let mut values = std::collections::BTreeMap::new();
     values.insert("opacity".to_string(), "0.5".to_string());
     assert!(plugin.configure(values));
     assert_eq!(
-        plugin.invoke("ping").expect("sigue respondiendo")["pong"],
-        42
+        plugin.invoke("toggle").expect("sigue respondiendo")["triggers"],
+        0
     );
 
     // Una acción desconocida no es un error: simplemente no hay respuesta.
@@ -158,24 +134,24 @@ fn a_real_plugin_can_be_installed_started_used_and_removed() {
     // La resolucion de teclas es local a partir de las combinaciones declaradas.
     let plugins: Vec<Arc<ExternalPlugin>> = vec![Arc::clone(&plugin)];
     let (owner, action) =
-        ExternalPlugin::resolve_action(&plugins, "p", true, false, true).expect("debe resolver");
-    assert_eq!(owner.manifest().id, "probe");
-    assert_eq!(action, "ping");
+        ExternalPlugin::resolve_action(&plugins, "h", true, true, false).expect("debe resolver");
+    assert_eq!(owner.manifest().id, "example");
+    assert_eq!(action, "toggle");
     assert!(
-        ExternalPlugin::resolve_action(&plugins, "p", false, false, true).is_none(),
-        "sin ctrl no es la misma combinacion"
+        ExternalPlugin::resolve_action(&plugins, "h", true, false, false).is_none(),
+        "sin alt no es la misma combinacion"
     );
 
     // Recargar mantiene el plugin operativo.
     plugin.reload().expect("deberia recargar");
     assert_eq!(
-        plugin.invoke("ping").expect("responde tras recargar")["pong"],
-        42
+        plugin.invoke("toggle").expect("responde tras recargar")["triggers"],
+        0
     );
 
     // Desinstalar deja el directorio limpio.
-    assert!(host::uninstall("probe").expect("desinstalar"));
-    assert!(!host::installed().iter().any(|m| m.id == "probe"));
+    assert!(host::uninstall("example").expect("desinstalar"));
+    assert!(!host::installed().iter().any(|m| m.id == "example"));
 
     let _ = std::fs::remove_dir_all(&root);
 }

@@ -108,6 +108,43 @@ El SDK (`port-plugin-sdk`) depende solo de `serde`. A propósito **no** arrastra
 GPUI: si lo hiciera, instalar un plugin sería tan pesado como recompilar PORT,
 que es justo lo que este diseño evita.
 
+## Cuándo elegir cada uno
+
+La decisión se tomaba una vez por plugin y volvía a discutirse. Queda escrita:
+
+**Proceso independiente** cuando el plugin solo mueve valores: opacidad,
+tipografía, un atajo, un veto de cierre. Gana un `kill` duro y no puede
+enlazarse contra los internos de PORT.
+
+**En el proceso** cuando el plugin dibuja: una barra lateral, una barra de
+estado, cualquier cosa que componga elementos de GPUI. Es el único camino que
+puede, así que mover estos plugins al otro lado **rompería la posibilidad de
+dibujar**, que es justamente la visión del proyecto.
+
+Ninguno es una versión recortada.
+
+### Por qué no se mueven todos a proceso independiente
+
+Porque se perdería el dibujo. El motivo habitual a favor es el aislamiento, y
+esa parte ya está cubierta en el camino en el proceso:
+
+- Un hook que entra en pánico queda aislado por `catch_unwind`.
+- Un hook que excede su presupuesto de 50 ms se desactiva y deja de invocarse.
+
+El `kill` duro solo importa frente a un plugin que cuelga un hilo sin bloquear
+la interfaz, cosa que no hace ninguno de los plugins que hay aquí.
+
+### El coste real de un proceso independiente
+
+Medido en esta máquina: **1 MB de RSS y 0,0 % de CPU** en reposo, con
+**0,71 ms** de arranque. El número de procesos es el que la gente cuenta, pero
+no es el que consume. Una instalación por defecto no tiene ninguno: son
+opt-in.
+
+Si aun así preocupara, el límite razonable no es un tope de procesos sino
+mantener en el proceso lo que dibuja y aceptar el resto. Un contador de
+procesos solo convertiría un problema perceptible en un problema invisible.
+
 ## Límites actuales
 
 - `LayoutHook` **no** cruza el límite del proceso: un `AnyElement` de GPUI no

@@ -1,0 +1,22 @@
+[package]
+name = "port-plugin-example"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "PORT: plugin de ejemplo que corre como proceso independiente"
+
+# Cómo se registra el plugin al instalarlo. Sin esta sección el identificador
+# se deduciría del nombre del paquete ("port_plugin_example").
+[package.metadata.port]
+id = "example"
+capabilities = ["appearance", "input"]
+
+[[bin]]
+name = "port-plugin-example"
+path = "src/main.rs"
+
+[dependencies]
+# El SDK solo trae serde. Un plugin no enlaza contra GPUI ni contra los internos
+# de PORT: por eso instalarlo no obliga a recompilar la terminal.
+port-plugin-sdk = { path = "../../crates/plugin-sdk" }
+serde_json = "1"

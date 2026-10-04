@@ -1,0 +1,1 @@
+/home/loonbac/Proyectos/port/examples/external-plugin/target/release/port-plugin-example: /home/loonbac/Proyectos/port/crates/plugin-sdk/src/lib.rs /home/loonbac/Proyectos/port/crates/plugin-sdk/src/protocol.rs /home/loonbac/Proyectos/port/crates/plugin-sdk/src/runtime.rs /home/loonbac/Proyectos/port/examples/external-plugin/src/main.rs

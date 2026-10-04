@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
+exclude = ["examples/external-plugin"]
 members = [
     "crates/term-core",
     "crates/plugin-sdk",
