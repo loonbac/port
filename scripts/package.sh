@@ -11,14 +11,25 @@ PKG="${1:-}"
 source "$(dirname "${BASH_SOURCE[0]}")/version.sh"
 VERSION="$PORT_VERSION"
 BIN="port"
-BINARY="result/bin/$BIN"
+# El binario puede venir de dos sitios: de la flake (`nix build .#port`, que
+# deja `result/`) o del bundle portable (`target/portable/`, que compila en un
+# contenedor y no pasa por Nix). Antes solo se miraba el primero, y el job
+# "bundle portable" fallaba al no encontrarlo aunque tuviera el bundle delante.
+BINARY=""
+for candidate in "result/bin/$BIN" "target/portable/bin/$BIN" "target/release/$BIN"; do
+  if [ -x "$candidate" ]; then
+    BINARY="$candidate"
+    break
+  fi
+done
 DIST="dist"
 PKG_NAME="port"
 
 die() { echo "error: $*" >&2; exit 1; }
 
 [ -n "$PKG" ] || die "uso: $0 <deb|rpm|arch|appimage>"
-[ -x "$BINARY" ] || die "falta $BINARY; ejecuta 'nix build .#port' primero"
+[ -n "$BINARY" ] || die "no encuentro el binario en result/bin, target/portable/bin ni target/release; construye antes de empaquetar"
+echo "==> Empaquetando desde $BINARY"
 
 mkdir -p "$DIST"
 rm -rf "$DIST"/*

@@ -177,6 +177,14 @@ jobs:
         package: [deb, spec]
 
     steps:
+      # Hace falta el repositorio: el job ejecuta scripts/package.sh, que no
+      # viaja en el artefacto del binario. Sin este checkout el script no
+      # existe y el job muere con "No such file or directory".
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
       - name: Descargar binario
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
         with:
