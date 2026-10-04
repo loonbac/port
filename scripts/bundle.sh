@@ -67,14 +67,20 @@ search_dirs() {
 }
 
 find_lib() {
-  local name="$1" dir
+  local name="$1" dir dirs
+  # La lista se calcula ANTES de buscar. Con sustitucion de procesos, el
+  # `return 0` del acierto cerraba el pipe mientras `search_dirs` seguia
+  # escribiendo: aparecian errores de "Broken pipe" y la busquedadel resto de
+  # librerias se quedaba sin directorios, de ahi el "no encuentro
+  # libxcb-xkb.so.1" aunque la libreria estuviese instalada.
+  dirs="$(search_dirs)"
   while read -r dir; do
     [ -n "$dir" ] || continue
     if [ -e "$dir/$name" ]; then
       echo "$dir/$name"
       return 0
     fi
-  done < <(search_dirs)
+  done <<< "$dirs"
   return 1
 }
 
