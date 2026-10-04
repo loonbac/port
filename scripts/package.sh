@@ -64,8 +64,21 @@ install_desktop() {
 install_icon() {
   local size="$1" dest="$2"
   mkdir -p "$dest"
-  # Un icono mínimo y válido, generado sin depender de fuentes del sistema.
-  # Si ImageMagick está disponible se pinta una "P"; si no, un PNG sólido.
+
+  # El icono del proyecto, si esta en el repositorio. Se copia directamente:
+  # ya viene al tamaño que usa hicolor y no hace falta ImageMagick para nada,
+  # que es lo que hacia fallar el empaquetado en maquinas sin esas herramientas.
+  # ROOT se reutiliza como staging en cada formato, asi que la raiz del
+  # repositorio se saca de la ubicacion del propio script y no de ROOT.
+  local repo_root
+  repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  local source_icon="$repo_root/assets/icon-256.png"
+  if [ -f "$source_icon" ]; then
+    cp "$source_icon" "$dest/$BIN.png"
+    return 0
+  fi
+
+  # Sin icono en el repositorio: se genera uno, antes a mano.
   local magick=""
   command -v magick >/dev/null 2>&1 && magick="magick"
   [ -z "$magick" ] && command -v convert >/dev/null 2>&1 && magick="convert"
