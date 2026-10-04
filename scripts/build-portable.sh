@@ -92,13 +92,16 @@ case "$interp" in
     ;;
 esac
 echo "==> Interprete: $interp"
-DOCKER
 
-  # El bundle se monta desde fuera: el contenedor tiene las librerias del
-  # sistema, que es justo lo que hay que empaquetar.
-  echo "==> Empaquetando"
-  LIBRARY_PATH="/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu" \
-    "$ROOT/scripts/bundle.sh" --from portable
+# El empaquetado corre DENTRO del contenedor, y no por gusto: las librerias
+# que hay que empaquetar se instalaron aqui con apt. En el host (el runner de
+# Ubuntu) no estan, y el fallo aparecia como "no encuentro libxcb-xkb.so.1"
+# dos pasos mas tarde, muy lejos de su causa: libxcb.so.1 si esta en Ubuntu
+# por casualidad, asi que una se copiaba y la otra no, y parecian un problema
+# de nombres en vez de de sitio.
+echo "==> Empaquetando"
+sh /src/scripts/bundle.sh --from portable
+DOCKER
 }
 
 build_native() {

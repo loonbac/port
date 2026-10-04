@@ -20,6 +20,19 @@ BUNDLE="$DIST/$BIN-$VERSION-linux-x86_64"
 
 die() { echo "error: $*" >&2; exit 1; }
 
+# Librerias que GPUI abre con dlopen en lugar de enlazarlas. No aparecen en
+# `ldd`, asi que no se pueden deducir: si faltan, es un problema de verdad.
+DLOPEN_LIBS="libwayland-client.so.0 libvulkan.so.1"
+
+is_dlopen_lib() {
+  case " $DLOPEN_LIBS " in *" $1 "*) return 0 ;; *) return 1 ;; esac
+}
+
+# `true` si el binario enlaza (o el linker cargara) contra ese soname.
+binary_links() {
+  ldd "$BUNDLE/bin/$BIN" 2>/dev/null | grep -q "$1"
+}
+
 # Localiza el binario: se acepta tanto el de `cargo build --release` como el
 # que produce la flake de Nix.
 resolve_binary() {
@@ -107,11 +120,27 @@ main() {
   echo "==> Copiando librerias necesarias a lib/"
   local name src
   for name in "${REQUIRED_LIBS[@]}"; do
-    if ! src="$(find_lib "$name")"; then
-      die "no encuentro $name; instala el paquete que lo provee"
+    if src="$(find_lib "$name")"; then
+      cp -L "$src" "$BUNDLE/lib/$name"
+      echo "    $name"
+      continue
     fi
-    cp -L "$src" "$BUNDLE/lib/$name"
-    echo "    $name"
+
+    # No esta en el sistema. Antes aqui se moria siempre, y con ella caia la
+    # construccion entera por una libreria que el binario quiza ni usa: la
+    # lista de sonames es una suposicion sobre lo que hace falta. La verdad
+    # la dice `ldd`.
+    #
+    # Salvedad: GPUI abre Wayland, Vulkan y FreeType con dlopen, y eso NO
+    # aparece en `ldd`. Para esas la ausencia si es un problema real, asi que
+    # se siguen exigiendo siempre.
+    if is_dlopen_lib "$name"; then
+      die "no encuentro $name y GPUI la abre con dlopen; instala el paquete que lo provee"
+    fi
+    if binary_links "$name"; then
+      die "el binario enlaza contra $name pero no esta en el sistema"
+    fi
+    echo "    (omitida) $name: el binario no la necesita"
   done
 
   echo "==> Copiando dependencias transitivas"
