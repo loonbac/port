@@ -1,0 +1,202 @@
+//! Gestión de plugins por línea de comandos.
+//!
+//! Vive separado de la ventana a propósito: `port plugin add` no necesita GPUI
+//! ni una sesión gráfica, así que no arranca la interfaz. Instalar un plugin
+//! desde una terminal es precisamente el caso más común, y no debería exigir
+//! abrir otra terminal.
+
+use port_plugin_api::host;
+use port_plugin_api::install;
+
+/// Qué pidió la persona en la línea de comandos.
+#[derive(Debug)]
+pub enum Command {
+    /// No hay subcomando de plugin: hay que abrir la terminal.
+    RunTerminal,
+    Plugin(PluginCommand),
+    Help,
+}
+
+#[derive(Debug)]
+pub enum PluginCommand {
+    Add { url: String },
+    List,
+    Remove { id: String },
+}
+
+pub const HELP: &str = "\
+PORT: terminal y plataforma de plugins
+
+uso:
+  port                        abre la terminal
+  port plugin add <url>       instala un plugin desde un repositorio
+  port plugin list            muestra los plugins instalados
+  port plugin remove <id>     desinstala un plugin
+  port --help                 esta ayuda
+";
+
+/// Interpreta los argumentos. Devolver `RunTerminal` cuando no hay subcomando
+/// es lo que hace que `port` sin argumentos siga abriendo la ventana.
+pub fn parse(args: impl Iterator<Item = String>) -> Command {
+    let args: Vec<String> = args.skip(1).collect();
+
+    match args.first().map(String::as_str) {
+        Some("--help") | Some("-h") | Some("help") => Command::Help,
+        Some("plugin") => match args.get(1).map(String::as_str) {
+            Some("add") => match args.get(2) {
+                Some(url) => Command::Plugin(PluginCommand::Add { url: url.clone() }),
+                None => Command::Help,
+            },
+            Some("list") => Command::Plugin(PluginCommand::List),
+            Some("remove") | Some("rm") => match args.get(2) {
+                Some(id) => Command::Plugin(PluginCommand::Remove { id: id.clone() }),
+                None => Command::Help,
+            },
+            _ => Command::Help,
+        },
+        _ => Command::RunTerminal,
+    }
+}
+
+/// Ejecuta un comando de plugin y devuelve el código de salida.
+///
+/// Los errores se imprimen y se traducen a código distinto de cero; nunca se
+/// lanza un pánico por una entrada del usuario.
+pub fn run(command: PluginCommand) -> i32 {
+    match command {
+        PluginCommand::Add { url } => match install::install(&url) {
+            Ok(manifest) => {
+                println!("instalado {} {}", manifest.name, manifest.version);
+                println!("  ejecutable: {}", manifest.executable);
+                println!("  reinicia PORT para cargarlo");
+                0
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                1
+            }
+        },
+        PluginCommand::List => {
+            let manifests = host::installed();
+            if manifests.is_empty() {
+                println!(
+                    "no hay plugins instalados en {}",
+                    host::plugins_dir().display()
+                );
+                return 0;
+            }
+            for manifest in manifests {
+                let caps: Vec<String> = manifest
+                    .capabilities
+                    .iter()
+                    .map(|c| format!("{c:?}").to_lowercase())
+                    .collect();
+                println!(
+                    "{:<20} {:<10} {}",
+                    manifest.id,
+                    manifest.version,
+                    caps.join(", ")
+                );
+            }
+            0
+        }
+        PluginCommand::Remove { id } => match host::uninstall(&id) {
+            Ok(true) => {
+                println!("eliminado {id}");
+                0
+            }
+            Ok(false) => {
+                eprintln!("no está instalado: {id}");
+                1
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                1
+            }
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(list: &[&str]) -> Vec<String> {
+        std::iter::once("port".to_string())
+            .chain(list.iter().map(|s| s.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn no_arguments_opens_the_terminal() {
+        assert!(matches!(parse(args(&[]).into_iter()), Command::RunTerminal));
+    }
+
+    #[test]
+    fn unknown_subcommand_opens_the_terminal_rather_than_failing() {
+        // Un flag futuro que no-sea-comando no debe impedir abrir la terminal.
+        assert!(matches!(
+            parse(args(&["--new"]).into_iter()),
+            Command::RunTerminal
+        ));
+    }
+
+    #[test]
+    fn help_is_recognised() {
+        assert!(matches!(
+            parse(args(&["--help"]).into_iter()),
+            Command::Help
+        ));
+        assert!(matches!(parse(args(&["help"]).into_iter()), Command::Help));
+    }
+
+    #[test]
+    fn plugin_add_takes_the_url() {
+        match parse(args(&["plugin", "add", "https://github.com/u/p"]).into_iter()) {
+            Command::Plugin(PluginCommand::Add { url }) => {
+                assert_eq!(url, "https://github.com/u/p")
+            }
+            other => panic!("no se reconoce plugin add: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn plugin_add_without_url_asks_for_help() {
+        assert!(matches!(
+            parse(args(&["plugin", "add"]).into_iter()),
+            Command::Help
+        ));
+    }
+
+    #[test]
+    fn list_and_remove_are_recognised() {
+        assert!(matches!(
+            parse(args(&["plugin", "list"]).into_iter()),
+            Command::Plugin(PluginCommand::List)
+        ));
+        match parse(args(&["plugin", "rm", "demo"]).into_iter()) {
+            Command::Plugin(PluginCommand::Remove { id }) => assert_eq!(id, "demo"),
+            other => panic!("no se reconoce plugin rm: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn listing_with_no_plugins_is_not_an_error() {
+        let dir = std::env::temp_dir().join(format!("port-cli-empty-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        unsafe { std::env::set_var("PORT_PLUGIN_DIR", &dir) };
+        assert_eq!(run(PluginCommand::List), 0);
+        unsafe { std::env::remove_var("PORT_PLUGIN_DIR") };
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn removing_an_unknown_plugin_fails_cleanly() {
+        assert_eq!(
+            run(PluginCommand::Remove {
+                id: "no-existe".into()
+            }),
+            1
+        );
+    }
+}

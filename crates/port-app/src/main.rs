@@ -3,6 +3,7 @@
 //! Aquí solo se conectan piezas: se arranca el shell, se decide el tamaño
 //! inicial de la ventana y se entrega la vista.
 
+mod cli;
 mod keys;
 mod metrics;
 mod view;
@@ -38,6 +39,20 @@ const PADDING: f32 = 10.0;
 const INITIAL_SIZE: (f32, f32) = (960.0, 620.0);
 
 fn main() {
+    // Los subcomandos de gestion de plugins se resuelven antes de abrir
+    // ninguna ventana: instalar un plugin no necesita sesion grafica.
+    match cli::parse(std::env::args()) {
+        cli::Command::RunTerminal => run_terminal(),
+        cli::Command::Help => {
+            println!("{}", cli::HELP);
+        }
+        cli::Command::Plugin(command) => {
+            std::process::exit(cli::run(command));
+        }
+    }
+}
+
+fn run_terminal() {
     Application::new().run(|cx: &mut App| {
         // Registro de plugins y carga de configuración central
         let mut plugin_registry = PluginRegistry::new();
@@ -61,6 +76,27 @@ fn main() {
         let close_guard = CloseGuardPlugin::new();
         let close_prompt = Rc::new(RefCell::new(ClosePromptState::default()));
         plugin_registry.register(close_guard.clone());
+
+        // Plugins externos instalados con `port plugin add`. Se arrancan
+        // despues de los compilados: son los de terceros y no deben poder
+        // impedir que la terminal levante.
+        let external = port_plugin_api::host::installed()
+            .into_iter()
+            .filter_map(|manifest| {
+                match port_plugin_api::host::ExternalPlugin::start(manifest) {
+                    Ok(plugin) => Some(plugin),
+                    Err(e) => {
+                        // Un plugin roto se avisa y se sigue: la terminal
+                        // abre igual, que es lo que importa.
+                        eprintln!("plugin no cargado: {e}");
+                        None
+                    }
+                }
+            })
+            .collect::<Vec<_>>();
+        if !external.is_empty() {
+            eprintln!("{} plugin(s) externo(s) cargados", external.len());
+        }
 
         // Carga la configuración desde ~/.config/port/config.md o la crea con los defaults
         let _ = plugin_registry.load_or_create_default_config();

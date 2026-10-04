@@ -5,6 +5,11 @@
 //! la apariencia, la entrada, el layout, el menú o la configuración de la terminal sin tocar el núcleo.
 
 pub mod config;
+pub mod host;
+pub mod install;
+pub mod watch;
+// El protocolo vive en el SDK para que un plugin no arrastre GPUI.
+pub use port_plugin_sdk::protocol;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap};

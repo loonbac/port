@@ -1,0 +1,13 @@
+[package]
+name = "port-plugin-sdk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "PORT: SDK ligero para escribir plugins externos (solo serde, sin GPUI)"
+
+[dependencies]
+# A proposito NO depende de gpui ni de port-term-core. Un plugin es un proceso
+# aparte: si el SDK arrastrase la interfaz, instalarlo seria tan pesado como
+# recompilar PORT, que es justo lo que este diseno evita.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
