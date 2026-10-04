@@ -143,13 +143,17 @@ jobs:
           curl -fsSL --proto '=https' --tlsv1.2 https://nixos.org/nix/install \
             | sh -s -- --no-daemon
 
-          # El instalador single-user deja el perfil en $HOME_DIR. Si HOME no
-          # coincide con el del runner, los pasos siguientes no encuentran nix.
-          echo "$HOME_DIR" >> "$GITHUB_ENV"
+          # GITHUB_PATH solo afecta a los pasos SIGUIENTES, asi que aqui `nix`
+          # todavia no esta en el PATH de esta shell: se comprueba la ruta del
+          # perfil, no `command -v`.
+          #
+          # No se exporta HOME por GITHUB_ENV: HOME es una de las variables que
+          # GitHub no permite redefinir ahi, y hacerlo rompe el procesado del
+          # entorno de todos los pasos siguientes.
           echo "$HOME_DIR/.nix-profile/bin" >> "$GITHUB_PATH"
 
-          command -v nix >/dev/null 2>&1 \
-            || { echo "::error::nix no quedo instalado"; exit 1; }
+          [ -x "$HOME_DIR/.nix-profile/bin/nix" ] \
+            || { echo "::error::nix no quedo instalado en $HOME_DIR"; exit 1; }
 
       - name: Cache de Nix
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
