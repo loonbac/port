@@ -132,8 +132,8 @@ jobs:
       - name: Paquetes nativos
         run: |
           set -eu
-          ./scripts/package.sh deb || true
-          ./scripts/package.sh rpm || true
+          ./scripts/package.sh deb
+          ./scripts/package.sh rpm
 
       - name: Comprobar el bundle
         run: |
@@ -183,9 +183,9 @@ jobs:
           set -eu
           # El .deb se construye sin dpkg-deb: es un `ar` con tres entradas.
           if [ "$PKG" = "deb" ]; then
-            ./scripts/package.sh deb || true
+            ./scripts/package.sh deb
           else
-            ./scripts/package.sh rpm || true
+            ./scripts/package.sh rpm
           fi
           ls -la dist/ || true
 
