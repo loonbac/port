@@ -134,15 +134,27 @@ jobs:
             apt-get update && apt-get install -y --no-install-recommends sudo
           fi
 
-          # Las imagenes minimas no traen curl. Sin el, la tuberia de abajo
-          # se traga el fallo y Nix nunca se instala.
-          if ! command -v curl >/dev/null 2>&1; then
+          # Las imagenes minimas no traen curl ni xz. Sin curl, la tuberia de
+          # abajo se traga el fallo y Nix nunca se instala; sin xz, el propio
+          # instalador aborta al desempaquetar su tarball. Ambos errores
+          # aparecen lejos de su causa, asi que se resuelven aqui de una vez.
+          # Se deja un espacio final: la sustitucion de abajo busca "xz " y sin
+          # el no encontraria el ultimo de la lista.
+          packages=""
+          command -v curl >/dev/null 2>&1 || packages="$packages curl ca-certificates "
+          command -v xz >/dev/null 2>&1 || packages="$packages xz "
+
+          if [ -n "$packages" ]; then
             if command -v apt-get >/dev/null 2>&1; then
-              apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates
+              # En Debian el descompresor se llama xz-utils, no xz.
+              packages="${packages//xz /xz-utils }"
+              apt-get update -qq
+              # shellcheck disable=SC2086
+              apt-get install -y -qq --no-install-recommends $packages
             elif command -v dnf >/dev/null 2>&1; then
-              dnf install -y -q curl ca-certificates
+              dnf install -y -q $packages
             else
-              echo "::error::no hay curl ni gestor de paquetes para instalarlo"
+              echo "::error::faltan herramientas basicas: $packages"
               exit 1
             fi
           fi
