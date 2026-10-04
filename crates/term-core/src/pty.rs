@@ -52,6 +52,12 @@ pub struct Pty {
     /// Descriptor del maestro del PTY. Permite preguntar al núcleo qué grupo de
     /// procesos está en primer plano, que es lo que distingue un job en primer
     /// plano de otro lanzado con `&`.
+    /// Descriptor del master, solo para consultar el grupo en primer plano.
+    ///
+    /// Es un concepto de Unix: en Windows no existe equivalente a `tcgetpgrp`,
+    /// asi que el campo no se compila alli en lugar de valuar cero y fingir
+    /// que funciona.
+    #[cfg(unix)]
     master_fd: Option<std::os::raw::c_int>,
     /// Último programa en primer plano ya confirmado como estable.
     stable_app: RefCell<Option<RunningApp>>,
@@ -119,6 +125,7 @@ impl Pty {
             .map_err(std::io::Error::other)?;
 
         Ok(Self {
+            #[cfg(unix)]
             master_fd: pair.master.as_raw_fd(),
             master: pair.master,
             writer,
@@ -253,18 +260,26 @@ impl Pty {
                 }
             }
 
-            match nested_shell {
-                Some(shell) => pid = shell,
-                None => return None,
-            }
+            pid = nested_shell?;
         }
         None
     }
 
     /// Grupo de procesos en primer plano del terminal, según el núcleo.
+    #[cfg(unix)]
     fn foreground_process_group(&self) -> Option<i32> {
         let fd = self.master_fd?;
         sysinfo::foreground_group(fd)
+    }
+
+    /// Sin equivalente en Windows: `tcgetpgrp` no existe fuera de Unix.
+    ///
+    /// Se devuelve `None` en vez de inventar un numero. La consecuencia es
+    /// visible y acotada: la deteccion de que programa esta en primer plano no
+    /// funciona ahi, y las funciones que dependen de ella lo dicen.
+    #[cfg(not(unix))]
+    fn foreground_process_group(&self) -> Option<i32> {
+        None
     }
 }
 

@@ -103,7 +103,6 @@
                 "port-plugin-font-0.1.0" = "sha256-A6LCkUE4PpN9p8qJhcyAHxSvzeg46C52KPxDDDky0fY=";
                 "port-plugin-font-zoom-0.1.0" = "sha256-A6LCkUE4PpN9p8qJhcyAHxSvzeg46C52KPxDDDky0fY=";
                 "port-plugin-herdr-0.1.0" = "sha256-A6LCkUE4PpN9p8qJhcyAHxSvzeg46C52KPxDDDky0fY=";
-                "port-plugin-menu-customizer-0.1.0" = "sha256-A6LCkUE4PpN9p8qJhcyAHxSvzeg46C52KPxDDDky0fY=";
                 "port-plugin-shortcuts-0.1.0" = "sha256-A6LCkUE4PpN9p8qJhcyAHxSvzeg46C52KPxDDDky0fY=";
                 "port-plugin-transparency-0.1.0" = "sha256-A6LCkUE4PpN9p8qJhcyAHxSvzeg46C52KPxDDDky0fY=";
               };

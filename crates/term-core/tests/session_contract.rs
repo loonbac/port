@@ -305,6 +305,14 @@ fn session_manager_manages_multiple_isolated_spaces() {
     assert_eq!(manager.active_id(), 2);
 }
 
+/// La deteccion de que programa esta en primer plano se apoya en `/proc` y en
+/// `tcgetpgrp`: solo existe en Linux.
+///
+/// Sin esta anotacion, en macOS los tests que esperan "no hay app en primer
+/// plano" pasarian sin comprobar nada, porque la deteccion nunca encuentra
+/// nada ahi. Un test que pasa por la razon equivocada es peor que un test
+/// ausente: da confianza que no esta ganada.
+#[cfg(target_os = "linux")]
 #[test]
 fn idle_terminal_reports_no_foreground_app() {
     let mut session = Session::spawn(plain_shell(), GridSize::new(60, 10)).expect("sesión");
@@ -321,6 +329,14 @@ fn idle_terminal_reports_no_foreground_app() {
     }
 }
 
+/// La deteccion de que programa esta en primer plano se apoya en `/proc` y en
+/// `tcgetpgrp`: solo existe en Linux.
+///
+/// Sin esta anotacion, en macOS los tests que esperan "no hay app en primer
+/// plano" pasarian sin comprobar nada, porque la deteccion nunca encuentra
+/// nada ahi. Un test que pasa por la razon equivocada es peor que un test
+/// ausente: da confianza que no esta ganada.
+#[cfg(target_os = "linux")]
 #[test]
 fn a_running_program_becomes_the_foreground_app_after_two_samples() {
     let mut session = Session::spawn(plain_shell(), GridSize::new(60, 10)).expect("sesión");
@@ -345,6 +361,14 @@ fn a_running_program_becomes_the_foreground_app_after_two_samples() {
     assert!(seen, "un proceso en primer plano debe detectarse como app");
 }
 
+/// La deteccion de que programa esta en primer plano se apoya en `/proc` y en
+/// `tcgetpgrp`: solo existe en Linux.
+///
+/// Sin esta anotacion, en macOS los tests que esperan "no hay app en primer
+/// plano" pasarian sin comprobar nada, porque la deteccion nunca encuentra
+/// nada ahi. Un test que pasa por la razon equivocada es peor que un test
+/// ausente: da confianza que no esta ganada.
+#[cfg(target_os = "linux")]
 #[test]
 fn a_background_job_is_not_reported_as_foreground_app() {
     // Un shell con job control (`sh -i`) es necesario para que `&` cree un
@@ -374,6 +398,14 @@ fn a_background_job_is_not_reported_as_foreground_app() {
     }
 }
 
+/// La deteccion de que programa esta en primer plano se apoya en `/proc` y en
+/// `tcgetpgrp`: solo existe en Linux.
+///
+/// Sin esta anotacion, en macOS los tests que esperan "no hay app en primer
+/// plano" pasarian sin comprobar nada, porque la deteccion nunca encuentra
+/// nada ahi. Un test que pasa por la razon equivocada es peor que un test
+/// ausente: da confianza que no esta ganada.
+#[cfg(target_os = "linux")]
 #[test]
 fn a_finished_program_stops_being_reported_as_foreground_app() {
     let mut session = Session::spawn(plain_shell(), GridSize::new(60, 10)).expect("sesión");
@@ -409,6 +441,14 @@ fn a_finished_program_stops_being_reported_as_foreground_app() {
     }
 }
 
+/// La deteccion de que programa esta en primer plano se apoya en `/proc` y en
+/// `tcgetpgrp`: solo existe en Linux.
+///
+/// Sin esta anotacion, en macOS los tests que esperan "no hay app en primer
+/// plano" pasarian sin comprobar nada, porque la deteccion nunca encuentra
+/// nada ahi. Un test que pasa por la razon equivocada es peor que un test
+/// ausente: da confianza que no esta ganada.
+#[cfg(target_os = "linux")]
 #[test]
 fn session_manager_reports_running_apps_across_all_sessions() {
     let mut manager =

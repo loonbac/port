@@ -45,6 +45,11 @@ env:
   # Se usa el canal estable en vez de un número exacto: fijar una versión
   # concreta la hacia obsoleta sin avisar, y el día que se jubile el workflow
   # falla al instalarla en todos los jobs a la vez.
+  #
+  # Consecuencia aceptada: el shell local usa el Rust de nixpkgs, que siempre
+  # va por detrás del canal estable. Un lint nuevo aparece aqui antes que en
+  # local, y el rojo del job se resuelve con la sugerencia que trae clippy. Es
+  # el precio de no fijar versiones, que es lo que pide la politica del repo.
   RUST_TOOLCHAIN: stable
 
 jobs:
@@ -87,7 +92,12 @@ jobs:
 
       - name: Instalar Nix (usuario único, sin daemon)
         run: |
-          set -eu
+          # `pipefail` no es decorativo: sin el, `curl ... | sh` devuelve el
+          # estado de `sh` (0) aunque curl no exista o falle, y el instalador
+          # se traga su propio error. Asi se perdia la instalacion entera en
+          # silencio y el fallo aparecia dos pasos mas tarde como
+          # "nix: not found", sin relacion aparente.
+          set -euo pipefail
           if [ "$(id -u)" = "0" ]; then
             HOME_DIR=/root
           else
@@ -116,10 +126,30 @@ jobs:
             apt-get update && apt-get install -y --no-install-recommends sudo
           fi
 
+          # Las imagenes minimas no traen curl. Sin el, la tuberia de abajo
+          # se traga el fallo y Nix nunca se instala.
+          if ! command -v curl >/dev/null 2>&1; then
+            if command -v apt-get >/dev/null 2>&1; then
+              apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates
+            elif command -v dnf >/dev/null 2>&1; then
+              dnf install -y -q curl ca-certificates
+            else
+              echo "::error::no hay curl ni gestor de paquetes para instalarlo"
+              exit 1
+            fi
+          fi
+
           # Solo https: nunca curl sobre http en una imagen de CI.
           curl -fsSL --proto '=https' --tlsv1.2 https://nixos.org/nix/install \
             | sh -s -- --no-daemon
+
+          # El instalador single-user deja el perfil en $HOME_DIR. Si HOME no
+          # coincide con el del runner, los pasos siguientes no encuentran nix.
+          echo "$HOME_DIR" >> "$GITHUB_ENV"
           echo "$HOME_DIR/.nix-profile/bin" >> "$GITHUB_PATH"
+
+          command -v nix >/dev/null 2>&1 \
+            || { echo "::error::nix no quedo instalado"; exit 1; }
 
       - name: Cache de Nix
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
