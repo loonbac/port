@@ -167,7 +167,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential pkg-config cmake nasm python3 \
-            libxcb1-dev libxkbcommon-dev \
+            libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev \
             libwayland-dev libvulkan-dev libfreetype-dev \
             libfontconfig-dev libharfbuzz-dev
 

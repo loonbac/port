@@ -38,6 +38,10 @@
       packages = forAllSystems (pkgs:
         let
           # Enlazadas al compilar y cargadas por dlopen al ejecutar.
+          # GPUI enlaza de forma explicita contra `libxkbcommon-x11`. En
+          # nixpkgs ese `.so` va DENTRO del paquete `libxkbcommon`, asi que no
+          # hay un atributo separado que declarar. En Debian, en cambio, si es
+          # un paquete aparte: de ahi que el CI lo instale explicitly.
           runtimeLibs = with pkgs; [
             libxcb
             libxkbcommon
@@ -151,6 +155,10 @@
 
       devShells = forAllSystems (pkgs:
         let
+          # GPUI enlaza de forma explicita contra `libxkbcommon-x11`. En
+          # nixpkgs ese `.so` va DENTRO del paquete `libxkbcommon`, asi que no
+          # hay un atributo separado que declarar. En Debian, en cambio, si es
+          # un paquete aparte: de ahi que el CI lo instale explicitly.
           runtimeLibs = with pkgs; [
             libxcb
             libxkbcommon
