@@ -121,11 +121,19 @@
               patchelf --set-rpath "${libPaths}:$out/lib" "$out/bin/port"
             '';
 
+            # portable-pty resuelve el cwd por defecto a traves de $HOME. El
+            # sandbox de Nix deja esa variable en un directorio temporal que
+            # luego borra, y el PTY falla con ENOENT al arrancar el shell.
+            HOME = "/tmp/port-home";
+            preBuild = ''
+              mkdir -p "$HOME"
+            '';
+
             # `doCheck` queda desactivado a proposito: casi toda la suite de
             # term-core arranca un PTY de verdad, y el sandbox de Nix no monta
-            # /dev/ptmx, asi que los tests de sesion fallarian por el entorno y no
-            # por el codigo. La suite completa corre en GitHub Actions, donde si
-            # hay PTY.
+            # /dev/ptmx, asi que los tests de sesion fallarian por el entorno y
+            # no por el codigo. La suite completa corre en GitHub Actions, donde
+            # si hay PTY.
             doCheck = false;
 
             meta = {

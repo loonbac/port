@@ -175,10 +175,15 @@ jobs:
       # una acción de terceros para no añadir superficie de ataque.
       - name: Rust
         # Los runners ya traen rustup y el toolchain estable preinstalados.
-        # Reinstalarlos es redundante y en Windows `rustup toolchain install`
-        # falla sin `rustup set profile` previo.
+        # El valor se interpola con la sintaxis de GitHub Actions porque en
+        # PowerShell `$RUST_TOOLCHAIN` no se expande desde el entorno del job.
+        shell: pwsh
         run: |
-          rustup default "$RUST_TOOLCHAIN" || rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update
+          rustup default "${{ env.RUST_TOOLCHAIN }}"
+          if ($LASTEXITCODE -ne 0) {
+            rustup toolchain install "${{ env.RUST_TOOLCHAIN }}" --profile minimal --no-self-update
+            rustup default "${{ env.RUST_TOOLCHAIN }}"
+          }
           rustc --version
           cargo --version
 
@@ -231,10 +236,15 @@ jobs:
 
       - name: Rust
         # Los runners ya traen rustup y el toolchain estable preinstalados.
-        # Reinstalarlos es redundante y en Windows `rustup toolchain install`
-        # falla sin `rustup set profile` previo.
+        # El valor se interpola con la sintaxis de GitHub Actions porque en
+        # PowerShell `$RUST_TOOLCHAIN` no se expande desde el entorno del job.
+        shell: pwsh
         run: |
-          rustup default "$RUST_TOOLCHAIN" || rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update
+          rustup default "${{ env.RUST_TOOLCHAIN }}"
+          if ($LASTEXITCODE -ne 0) {
+            rustup toolchain install "${{ env.RUST_TOOLCHAIN }}" --profile minimal --no-self-update
+            rustup default "${{ env.RUST_TOOLCHAIN }}"
+          }
           rustc --version
           cargo --version
 
@@ -278,10 +288,15 @@ jobs:
 
       - name: Rust
         # Los runners ya traen rustup y el toolchain estable preinstalados.
-        # Reinstalarlos es redundante y en Windows `rustup toolchain install`
-        # falla sin `rustup set profile` previo.
+        # El valor se interpola con la sintaxis de GitHub Actions porque en
+        # PowerShell `$RUST_TOOLCHAIN` no se expande desde el entorno del job.
+        shell: pwsh
         run: |
-          rustup default "$RUST_TOOLCHAIN" || rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update
+          rustup default "${{ env.RUST_TOOLCHAIN }}"
+          if ($LASTEXITCODE -ne 0) {
+            rustup toolchain install "${{ env.RUST_TOOLCHAIN }}" --profile minimal --no-self-update
+            rustup default "${{ env.RUST_TOOLCHAIN }}"
+          }
           rustc --version
           cargo --version
 
