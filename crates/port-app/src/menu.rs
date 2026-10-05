@@ -144,6 +144,22 @@ impl MenuState {
         }
     }
 
+    /// Pega texto desde el portapapeles en el campo de URL.
+    ///
+    /// Va aparte del pegado por teclado porque pegar NO llega como tecla:
+    /// llega desde el portapapeles del sistema, y hay que ir a buscarlo.
+    pub fn input_paste(&mut self, text: &str) {
+        // Una URL copiada suele traer un salto de linea final; pegarla tal
+        // cual meteria un caracter invisible que rompe la instalacion.
+        let cleaned = text.trim_end_matches(['\r', '\n']);
+        if cleaned.is_empty() {
+            return;
+        }
+        if let MenuMode::Adding { ref mut input } = self.mode {
+            input.push_str(cleaned);
+        }
+    }
+
     /// Añade un carácter al búfer en modo `Adding`.
     pub fn input_append_char(&mut self, c: char) {
         if let MenuMode::Adding { ref mut input } = self.mode {
@@ -250,7 +266,6 @@ impl MenuState {
                         }
                     }
                     "a" | "A" | "+" if !key.ctrl && !key.alt => {
-                        // Atajo rápido para iniciar adición de plugin
                         self.start_adding();
                         MenuAction::Refresh
                     }
@@ -520,11 +535,6 @@ fn render_browsing(
         .flex_col()
         .gap(px(12.0))
         .child(render_header("PLUGINS", title, "PORT Core"))
-        .child(render_help_bar(&[
-            "↑↓ Navigate",
-            "Space / Enter Toggle / Select",
-            "Esc Close",
-        ]))
         .child(list)
 }
 
@@ -669,11 +679,6 @@ fn render_adding(input: &str) -> impl IntoElement {
             "Install Plugin from Git",
             "PORT Core",
         ))
-        .child(render_help_bar(&[
-            "Enter Install",
-            "Esc Cancel",
-            "Backspace Delete",
-        ]))
         .child(div().text_size(px(12.0)).text_color(rgb(0x8b949e)).child(
             "Enter the Git repository URL. PORT will clone and compile it in the background:",
         ))
@@ -791,10 +796,6 @@ fn render_installing(
             "Installing Plugin",
             "PORT Core",
         ))
-        .child(render_help_bar(&[
-            "↑↓ Navigate list",
-            "Esc Close menu (continues in background)",
-        ]))
         .child(banner)
         .child(list)
 }
@@ -824,7 +825,6 @@ fn render_result(success: bool, message: &str) -> impl IntoElement {
         .flex_col()
         .gap(px(14.0))
         .child(render_header("RESULT", "Installation Result", "PORT Core"))
-        .child(render_help_bar(&["Press any key to return"]))
         .child(
             div()
                 .flex()
@@ -905,18 +905,4 @@ fn render_header(badge: &'static str, title: &str, subtitle: &'static str) -> im
                 .text_color(rgb(0x8b949e))
                 .child(subtitle),
         )
-}
-
-/// Barra de ayuda inferior o secundaria con comandos de teclado.
-fn render_help_bar(items: &[&'static str]) -> impl IntoElement {
-    let mut bar = div().flex().flex_row().items_center().gap(px(12.0));
-    for item in items {
-        bar = bar.child(
-            div()
-                .text_size(px(11.0))
-                .text_color(rgb(0x8b949e))
-                .child(*item),
-        );
-    }
-    bar
 }

@@ -195,6 +195,25 @@ fn run_terminal() {
 
                 // Si el menú está abierto, delega la entrada al módulo de menú
                 if menu_state_for_keys.borrow().open {
+                    // Pegar no llega como tecla: hay que ir al portapapeles.
+                    // Sin esto, `Ctrl+V` caía en la rama que ignora las teclas
+                    // con modificador y no pasaba absolutamente nada.
+                    let pegando_url = {
+                        let s = menu_state_for_keys.borrow();
+                        matches!(s.mode, crate::menu::MenuMode::Adding { .. })
+                    };
+                    if pegando_url
+                        && key.ctrl
+                        && !key.alt
+                        && key.key.eq_ignore_ascii_case("v")
+                    {
+                        if let Some(text) = cx.read_from_clipboard().and_then(|i| i.text()) {
+                            menu_state_for_keys.borrow_mut().input_paste(&text);
+                        }
+                        window.refresh();
+                        return;
+                    }
+
                     let (total_items, compiled_count) = {
                         let s = menu_state_for_keys.borrow();
                         let c_count = plugins_for_keys.borrow().len();
