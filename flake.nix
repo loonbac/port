@@ -20,7 +20,7 @@
 {
   description = "PORT: Plugin-Oriented Rust Terminal";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
   outputs = { self, nixpkgs }:
     let
@@ -48,6 +48,8 @@
             freetype
             wayland
             vulkan-loader
+            fontconfig.lib
+            stdenv.cc.cc.lib
           ];
 
           # concatStringsSep trabaja con strings, no con derivaciones: de ahi
@@ -120,12 +122,17 @@
             # baja (blade-graphics, gpu-alloc) tambien abren Wayland y Vulkan por
             # dlopen, asi que necesitan las rutas en su propio RPATH. Sin esto
             # el binario compila bien pero al arrancar falla con NoWaylandLib.
+            #
+            # Se usa `--add-rpath` en vez de `--set-rpath`: `--set-rpath` destruia
+            # el RPATH previo de stdenv (glibc y gcc) y el binario en NixOS no
+            # podia encontrar ni libgcc_s ni libfontconfig en runtime. Sin fuentes,
+            # la terminal abria una ventana vacia solo con el bloque del cursor.
             postFixup = ''
               for l in ${libNames}; do
-                patchelf --set-rpath "$l/lib:$out/lib" \
+                patchelf --add-rpath "$l/lib:$out/lib" \
                   $out/lib/*.so* 2>/dev/null || true
               done
-              patchelf --set-rpath "${libPaths}:$out/lib" "$out/bin/port"
+              patchelf --add-rpath "${libPaths}:$out/lib" "$out/bin/port"
             '';
 
             # portable-pty resuelve el cwd por defecto a traves de $HOME. El
@@ -209,6 +216,8 @@
             freetype
             wayland
             vulkan-loader
+            fontconfig.lib
+            stdenv.cc.cc.lib
           ];
         in {
           default = pkgs.mkShell {
