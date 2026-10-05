@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -9,6 +10,7 @@ use port_plugin_api::{
 };
 use port_term_core::frame::Rgb;
 use port_term_core::input::Key;
+use port_term_core::pty::PtyConfig;
 
 struct MockTransparencyPlugin {
     opacity: f32,
@@ -171,6 +173,93 @@ impl Plugin for MockLayoutPlugin {
     fn layout_hook(&self) -> Option<&dyn LayoutHook> {
         Some(self)
     }
+}
+
+/// Plugin de prueba con una petición de sesión que ejecuta un programa propio.
+///
+/// Guarda la petición pendiente en una celda para comprobar que el consumo la
+/// agota: la primera consulta la entrega, la siguiente ya no ve nada.
+struct MockSpawnPlugin {
+    pending: Cell<Option<PtyConfig>>,
+}
+
+impl SpaceHook for MockSpawnPlugin {
+    fn take_spawn_session_request(&self) -> Option<PtyConfig> {
+        self.pending.take()
+    }
+}
+
+impl Plugin for MockSpawnPlugin {
+    fn id(&self) -> &'static str {
+        "spawn"
+    }
+
+    fn name(&self) -> &'static str {
+        "Mock Spawn"
+    }
+
+    fn space_hook(&self) -> Option<&dyn SpaceHook> {
+        Some(self)
+    }
+}
+
+fn echo_config(marker: &str) -> PtyConfig {
+    PtyConfig {
+        command: "/bin/echo".to_string(),
+        args: vec![marker.to_string()],
+        cwd: None,
+    }
+}
+
+#[test]
+fn a_pending_spawn_request_is_returned_once_and_then_exhausted() {
+    let mut registry = PluginRegistry::new();
+    registry.register(MockSpawnPlugin {
+        pending: Cell::new(Some(echo_config("visor"))),
+    });
+
+    let config = registry
+        .take_spawn_session_request()
+        .expect("la petición pendiente debe entregarse");
+    assert_eq!(config.command, "/bin/echo");
+    assert_eq!(config.args, vec!["visor".to_string()]);
+    assert!(
+        registry.take_spawn_session_request().is_none(),
+        "la petición se consume una sola vez"
+    );
+}
+
+#[test]
+fn a_registry_without_spawn_requests_returns_none() {
+    let mut registry = PluginRegistry::new();
+    // Plugin con hook de espacios, pero sin petición pendiente.
+    registry.register(MockSpawnPlugin {
+        pending: Cell::new(None),
+    });
+    // Plugins que ni siquiera implementan el hook de espacios.
+    registry.register(MockTransparencyPlugin { opacity: 0.9 });
+    registry.register(MockShortcutPlugin);
+
+    assert!(
+        registry.take_spawn_session_request().is_none(),
+        "sin petición pendiente no hay nada que crear"
+    );
+}
+
+#[test]
+fn a_later_plugin_still_wins_when_an_earlier_one_has_no_request() {
+    let mut registry = PluginRegistry::new();
+    registry.register(MockSpawnPlugin {
+        pending: Cell::new(None),
+    });
+    registry.register(MockSpawnPlugin {
+        pending: Cell::new(Some(echo_config("segundo"))),
+    });
+
+    let config = registry
+        .take_spawn_session_request()
+        .expect("la primera petición disponible debe entregarse");
+    assert_eq!(config.args, vec!["segundo".to_string()]);
 }
 
 #[test]

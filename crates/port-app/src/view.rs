@@ -11,17 +11,18 @@
 //! geométricas directas y suaves con `paint_quad`, evitando costosas búsquedas
 //! en fuentes de respaldo en aplicaciones como `btop`.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gpui::prelude::*;
 use gpui::{
     anchored, canvas, deferred, div, fill, point, px, rgb, size, App, Bounds, Context, FocusHandle,
-    Font, FontFallbacks, FontStyle, FontWeight, MouseButton, Pixels, Render, TextRun, Window,
+    Font, FontFallbacks, FontStyle, FontWeight, MouseButton, Pixels, Render, ScrollDelta,
+    ScrollWheelEvent, TextRun, Window,
 };
 use port_plugin_api::PluginRegistry;
 use port_term_core::frame::{Frame, Rgb, Run, Style};
-use port_term_core::session::SessionManager;
+use port_term_core::session::{CellPos, SessionManager};
 
 use crate::metrics::Metrics;
 
@@ -102,16 +103,23 @@ impl Render for TerminalView {
             }
         }
 
-        // 2. Si algún plugin solicitó cerrar una sesión específica
+        // 2. Si algún plugin solicitó una sesión que ejecute un programa propio
+        if let Some(config) = plugins.take_spawn_session_request() {
+            if let Ok(new_id) = session_mgr.spawn_session_with(config) {
+                plugins.on_session_created(new_id);
+            }
+        }
+
+        // 3. Si algún plugin solicitó cerrar una sesión específica
         if let Some(id) = plugins.take_close_session_request() {
             let _ = session_mgr.close(id);
         }
 
-        // 3. Sincroniza la sesión activa del gestor con la sesión solicitada por los plugins
+        // 4. Sincroniza la sesión activa del gestor con la sesión solicitada por los plugins
         let target_session = plugins.active_session_id();
         session_mgr.select(target_session);
 
-        // 4. Notifica a los plugins el directorio de trabajo actual de cada sesión viva
+        // 5. Notifica a los plugins el directorio de trabajo actual de cada sesión viva
         for (&id, session) in session_mgr.sessions().iter() {
             if let Some(cwd) = session.current_working_directory() {
                 let folder = session
@@ -121,7 +129,7 @@ impl Render for TerminalView {
             }
         }
 
-        // 5. Notifica a los plugins qué programa corre en primer plano en cada sesión
+        // 6. Notifica a los plugins qué programa corre en primer plano en cada sesión
         for (&id, session) in session_mgr.sessions().iter() {
             let app = session.foreground_app();
             plugins.update_session_app(id, app.as_ref());
@@ -170,6 +178,11 @@ impl Render for TerminalView {
                 focus.focus(window);
             });
 
+        // Esquina del área de rejilla en coordenadas de ventana, refrescada por
+        // el canvas en cada cuadro. La necesita la rueda para saber qué celda
+        // hay bajo el puntero cuando el programa pide reportes de ratón.
+        let grid_origin: Rc<Cell<(f32, f32)>> = Rc::new(Cell::new((0.0, 0.0)));
+
         // 1. Barras laterales izquierdas (full height)
         for sidebar in left_sidebars {
             root = root.child(sidebar);
@@ -182,25 +195,74 @@ impl Render for TerminalView {
         }
 
         main_col = main_col.child(
-            div().flex_1().w_full().child(
-                canvas(
-                    move |_bounds, _window, _cx| (),
-                    move |bounds, (), window, cx| {
-                        paint_frame(
-                            bounds,
-                            &frame,
-                            &metrics,
-                            effective_bg,
-                            &font_family,
-                            font_size,
-                            &font_fallbacks,
-                            window,
-                            cx,
+            div()
+                .flex_1()
+                .w_full()
+                // La rueda mueve el scrollback local del núcleo, o se reenvía al
+                // programa si este pidió reportes de ratón (pi, vim, less). Esa
+                // decisión vive en el núcleo: aquí solo se traduce el evento a
+                // líneas y a la celda bajo el puntero. Se engancha al contenedor
+                // de la terminal, no a la raíz, para que una rueda sobre una
+                // barra lateral de un plugin no desplace la terminal.
+                .on_scroll_wheel({
+                    let wheel_session = Rc::clone(&self.session_manager);
+                    let grid_origin = Rc::clone(&grid_origin);
+                    let cell_width = metrics.cell_width;
+                    let cell_height = metrics.cell_height;
+                    let padding = metrics.padding;
+                    move |event: &ScrollWheelEvent, window: &mut Window, _cx: &mut App| {
+                        let lines = wheel_lines(event.delta, cell_height);
+                        if lines == 0 {
+                            return;
+                        }
+                        let (origin_x, origin_y) = grid_origin.get();
+                        let cell = cell_under_pointer(
+                            event.position.x.into(),
+                            event.position.y.into(),
+                            origin_x + padding,
+                            origin_y + padding,
+                            cell_width,
+                            cell_height,
                         );
-                    },
-                )
-                .size_full(),
-            ),
+                        let consumed = wheel_session.borrow_mut().active_session_mut().wheel(
+                            lines,
+                            cell,
+                            event.modifiers.shift,
+                        );
+                        // La rueda es entrada de usuario, no un flujo continuo:
+                        // repintar cuando el evento se consume es barato.
+                        if consumed {
+                            window.refresh();
+                        }
+                    }
+                })
+                .child(
+                    canvas(
+                        {
+                            // El canvas deja lista su esquina en cada cuadro: es
+                            // el único origen exacto del área de rejilla, sin
+                            // repetir aquí la cuenta de barras y márgenes.
+                            let grid_origin = Rc::clone(&grid_origin);
+                            move |bounds: Bounds<Pixels>, _window: &mut Window, _cx: &mut App| {
+                                grid_origin.set((bounds.origin.x.into(), bounds.origin.y.into()));
+                            }
+                        },
+                        move |bounds, (), window, cx| {
+                            paint_frame(
+                                bounds,
+                                &frame,
+                                &metrics,
+                                effective_bg,
+                                &font_family,
+                                font_size,
+                                &font_fallbacks,
+                                window,
+                                cx,
+                            );
+                        },
+                    )
+                    .size_full(),
+                ),
         );
 
         for bar in bottom_bars {
@@ -235,6 +297,57 @@ impl Render for TerminalView {
 
         root
     }
+}
+
+/// Cuántas líneas del scrollback mueve un evento de rueda.
+///
+/// `ScrollDelta::Lines` ya llega en líneas: en Linux cada muesca de rueda se
+/// entrega como `Lines(3.0)` porque gpui multiplica el salto discreto por
+/// `SCROLL_LINES = 3.0` en sus backends X11/Wayland. `ScrollDelta::Pixels` es
+/// scroll suave y se convierte con la altura de línea de la rejilla. El
+/// componente horizontal se ignora: la terminal solo se desplaza en vertical.
+fn wheel_lines(delta: ScrollDelta, line_height: f32) -> i32 {
+    let y = match delta {
+        ScrollDelta::Lines(p) => p.y,
+        ScrollDelta::Pixels(p) => {
+            if line_height <= 0.0 {
+                return 0;
+            }
+            f32::from(p.y) / line_height
+        }
+    };
+
+    let rounded = y.round();
+    if rounded != 0.0 {
+        return rounded as i32;
+    }
+    // Una entrada no nula nunca se convierte en cero: el scroll suave por
+    // píxeles debe mover al menos una línea, aunque el delta sea diminuto.
+    if y > 0.0 {
+        1
+    } else if y < 0.0 {
+        -1
+    } else {
+        0
+    }
+}
+
+/// Celda (1-based) bajo el puntero, para el reporte SGR del ratón.
+///
+/// El puntero llega en coordenadas de ventana y `origin` es la esquina del
+/// área de rejilla ya con su margen interior descontado. Fuera de la rejilla se
+/// recorta a la primera celda, como exige el reporte.
+fn cell_under_pointer(
+    pointer_x: f32,
+    pointer_y: f32,
+    origin_x: f32,
+    origin_y: f32,
+    cell_width: f32,
+    cell_height: f32,
+) -> CellPos {
+    let column = ((pointer_x - origin_x) / cell_width).floor() as i32 + 1;
+    let row = ((pointer_y - origin_y) / cell_height).floor() as i32 + 1;
+    CellPos::new(column, row)
 }
 
 /// Estado del diálogo de confirmación de cierre.
@@ -737,4 +850,118 @@ fn style_of(run: &Run, is_cursor: bool) -> Style {
 fn color(rgb_value: Rgb) -> gpui::Hsla {
     let packed = (rgb_value.r as u32) << 16 | (rgb_value.g as u32) << 8 | (rgb_value.b as u32);
     rgb(packed).into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Altura de línea de una fuente de 14 px, la misma que produce `Metrics`.
+    const LINE_HEIGHT: f32 = 19.0;
+
+    #[test]
+    fn pixels_se_convierten_a_lineas_con_la_altura_de_linea() {
+        // 57 px sobre una línea de 19 px son 3 líneas exactas.
+        let delta = ScrollDelta::Pixels(point(px(0.0), px(3.0 * LINE_HEIGHT)));
+        assert_eq!(wheel_lines(delta, LINE_HEIGHT), 3);
+
+        // El redondeo se lleva al entero más cercano, no trunca.
+        let delta = ScrollDelta::Pixels(point(px(0.0), px(1.6 * LINE_HEIGHT)));
+        assert_eq!(wheel_lines(delta, LINE_HEIGHT), 2);
+    }
+
+    #[test]
+    fn lines_ya_son_lineas_y_no_se_reescalan() {
+        // Una muesca de rueda en Linux llega como `Lines(3.0)`: tres líneas.
+        let delta = ScrollDelta::Lines(point(0.0, 3.0));
+        assert_eq!(wheel_lines(delta, LINE_HEIGHT), 3);
+
+        let delta = ScrollDelta::Lines(point(0.0, 6.0));
+        assert_eq!(wheel_lines(delta, LINE_HEIGHT), 6);
+    }
+
+    #[test]
+    fn la_entrada_nula_no_mueve_nada() {
+        assert_eq!(
+            wheel_lines(ScrollDelta::Lines(point(0.0, 0.0)), LINE_HEIGHT),
+            0
+        );
+        assert_eq!(
+            wheel_lines(ScrollDelta::Pixels(point(px(0.0), px(0.0))), LINE_HEIGHT),
+            0
+        );
+    }
+
+    #[test]
+    fn rueda_hacia_arriba_es_positivo_y_hacia_abajo_negativo() {
+        // En gpui un delta `y` positivo es rueda hacia arriba, que en el
+        // núcleo aleja la vista del final mostrando líneas más viejas.
+        let arriba = ScrollDelta::Pixels(point(px(0.0), px(LINE_HEIGHT)));
+        let abajo = ScrollDelta::Pixels(point(px(0.0), px(-LINE_HEIGHT)));
+        assert_eq!(wheel_lines(arriba, LINE_HEIGHT), 1);
+        assert_eq!(wheel_lines(abajo, LINE_HEIGHT), -1);
+        assert_eq!(
+            wheel_lines(ScrollDelta::Lines(point(0.0, 3.0)), LINE_HEIGHT),
+            3
+        );
+        assert_eq!(
+            wheel_lines(ScrollDelta::Lines(point(0.0, -3.0)), LINE_HEIGHT),
+            -3
+        );
+    }
+
+    #[test]
+    fn un_pixel_suelto_mueve_al_menos_una_linea() {
+        // Scroll suave diminuto: redondearía a cero, así que se fuerza ±1.
+        let delta = ScrollDelta::Pixels(point(px(0.0), px(2.0)));
+        assert_eq!(wheel_lines(delta, LINE_HEIGHT), 1);
+        let delta = ScrollDelta::Pixels(point(px(0.0), px(-2.0)));
+        assert_eq!(wheel_lines(delta, LINE_HEIGHT), -1);
+    }
+
+    #[test]
+    fn el_componente_horizontal_se_ignora() {
+        let delta = ScrollDelta::Pixels(point(px(40.0), px(0.0)));
+        assert_eq!(wheel_lines(delta, LINE_HEIGHT), 0);
+        let delta = ScrollDelta::Lines(point(9.0, 0.0));
+        assert_eq!(wheel_lines(delta, LINE_HEIGHT), 0);
+    }
+
+    /// La rejilla empieza en el origen del área de pintado: la esquina superior
+    /// izquierda es la celda 1,1 y cada celda avanza un ancho y una altura.
+    #[test]
+    fn el_puntero_se_traduce_a_celdas_1_based() {
+        let (origen_x, origen_y) = (20.0, 10.0);
+        let (ancho, alto) = (8.0, 19.0);
+
+        assert_eq!(
+            cell_under_pointer(origen_x, origen_y, origen_x, origen_y, ancho, alto),
+            CellPos::new(1, 1),
+            "la esquina superior izquierda es la celda 1,1"
+        );
+
+        // Cuatro celdas y dos filas más allá, con 3 px dentro de la celda.
+        let pointer_x = origen_x + ancho * 4.0 + 3.0;
+        let pointer_y = origen_y + alto * 2.0 + 1.0;
+        assert_eq!(
+            cell_under_pointer(pointer_x, pointer_y, origen_x, origen_y, ancho, alto),
+            CellPos::new(5, 3),
+            "la celda se cuenta desde uno, no desde cero"
+        );
+    }
+
+    /// Un puntero sobre el margen o por encima de la rejilla no puede producir
+    /// una celda cero: el reporte SGR no la admite.
+    #[test]
+    fn el_puntero_fuera_de_la_rejilla_se_recorta_a_la_primera_celda() {
+        assert_eq!(
+            cell_under_pointer(0.0, 0.0, 20.0, 10.0, 8.0, 19.0),
+            CellPos::new(1, 1)
+        );
+        assert_eq!(
+            cell_under_pointer(24.0, 5.0, 20.0, 10.0, 8.0, 19.0),
+            CellPos::new(1, 1),
+            "por encima del origen también se recorta a la primera fila"
+        );
+    }
 }

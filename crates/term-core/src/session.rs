@@ -61,6 +61,28 @@ impl EventListener for EventSink {
     }
 }
 
+/// Celda de la rejilla bajo el puntero, en coordenadas 1-based como las espera
+/// el reporte SGR del ratón.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CellPos {
+    pub column: u16,
+    pub row: u16,
+}
+
+impl CellPos {
+    /// Construye una celda 1-based.
+    ///
+    /// Fuera de la rejilla se recorta a 1: el reporte SGR no admite fila ni
+    /// columna cero, y un puntero sobre el margen debe seguir siendo válido.
+    pub fn new(column: i32, row: i32) -> Self {
+        let acotar = |valor: i32| valor.clamp(1, i32::from(u16::MAX)) as u16;
+        Self {
+            column: acotar(column),
+            row: acotar(row),
+        }
+    }
+}
+
 /// Una terminal viva: proceso, rejilla y estado de vista.
 pub struct Session {
     term: Term<EventSink>,
@@ -109,6 +131,11 @@ impl Session {
         }
         self.processor.advance(&mut self.term, &bytes);
         self.handle_internal_events();
+        // La salida nueva NO toca el viewport: una vista desplazada sobre el
+        // historial se conserva aunque el programa escriba sin parar, que es lo
+        // que hacen kitty y alacritty. Volver al presente es decisión del
+        // usuario (`scroll` hacia abajo); con `display_offset == 0` la salida ya
+        // sigue el final por sí sola.
         self.dirty.set(true);
         true
     }
@@ -171,6 +198,50 @@ impl Session {
         self.term
             .scroll_display(alacritty_terminal::grid::Scroll::Delta(lines));
         self.dirty.set(true);
+    }
+
+    /// Aplica una entrada de rueda del ratón y dice si la consumió.
+    ///
+    /// `lines` es el desplazamiento pedido (positivo hacia arriba) y `cell` la
+    /// celda bajo el puntero. Contrato de terminal real:
+    ///
+    /// - Si el programa pidió reportes de ratón (modos 1000/1002/1003) y el
+    ///   usuario no mantiene Shift, la rueda se le reenvía como reporte SGR
+    ///   (`ESC[<64;x;yM` arriba, `ESC[<65;x;yM` abajo) y el scrollback local no
+    ///   se toca: dentro de una TUI el historial de PORT no significa nada.
+    /// - En cualquier otro caso (sin reportes, o con Shift como salida de
+    ///   emergencia) se mueve el scrollback local.
+    ///
+    /// Se emite un solo reporte por evento, no uno por línea: un evento de
+    /// rueda es una muesca física y `lines` solo decide la dirección, igual que
+    /// en kitty o alacritty. Solo se usa la codificación SGR (1006), que es la
+    /// que habilitan las TUI modernas.
+    ///
+    /// La pantalla alterna sin reportes no tiene historial propio —alacritty no
+    /// guarda scrollback ahí— así que el desplazamiento local queda en cero. Es
+    /// el comportamiento aceptado, no un modo nuevo que inventar.
+    pub fn wheel(&mut self, lines: i32, cell: CellPos, shift_held: bool) -> bool {
+        if lines == 0 {
+            return false;
+        }
+        if !shift_held && self.mouse_reporting() {
+            let code = if lines > 0 { 64 } else { 65 };
+            let report = format!("\x1b[<{code};{};{}M", cell.column, cell.row);
+            // El reporte es entrada del programa, no salida de la rejilla: sale
+            // por el mismo camino que las respuestas de protocolo del terminal.
+            let _ = self.pty.write(report.as_bytes());
+            return true;
+        }
+        self.scroll(lines);
+        true
+    }
+
+    /// `true` si el programa del otro lado pidió reportes de ratón.
+    ///
+    /// Los tres modos de reporte son mutuamente exclusivos en la rejilla, pero
+    /// cualquiera de ellos significa que la rueda le pertenece al programa.
+    fn mouse_reporting(&self) -> bool {
+        self.term.mode().intersects(TermMode::MOUSE_MODE)
     }
 
     /// Directorio de trabajo actual del shell en tiempo real.
@@ -260,7 +331,17 @@ impl SessionManager {
     /// Crea y añade una nueva sesión de terminal con su propio proceso PTY y la activa.
     /// Devuelve el identificador único estable asignado a la nueva sesión.
     pub fn spawn_session(&mut self) -> std::io::Result<usize> {
-        let session = Session::spawn(self.default_config.clone(), self.size)?;
+        self.spawn_session_config(self.default_config.clone())
+    }
+
+    /// Crea y añade una sesión que ejecuta el programa indicado y la activa.
+    pub fn spawn_session_with(&mut self, config: PtyConfig) -> std::io::Result<usize> {
+        self.spawn_session_config(config)
+    }
+
+    /// Arranca el PTY de la sesión nueva, la registra y le da el foco.
+    fn spawn_session_config(&mut self, config: PtyConfig) -> std::io::Result<usize> {
+        let session = Session::spawn(config, self.size)?;
         let id = self.next_id;
         self.next_id += 1;
         self.sessions.insert(id, session);
@@ -441,5 +522,24 @@ impl SessionManager {
     /// Programa en primer plano de la sesión activa actual, si lo hay.
     pub fn active_app(&self) -> Option<RunningApp> {
         self.session_app(self.active_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CellPos;
+
+    /// El reporte SGR no admite fila ni columna cero: un puntero sobre el margen
+    /// debe seguir produciendo una celda válida.
+    #[test]
+    fn una_celda_fuera_de_la_rejilla_se_recorta_a_la_primera() {
+        assert_eq!(CellPos::new(0, 0), CellPos::new(1, 1));
+        assert_eq!(CellPos::new(-7, -3), CellPos::new(1, 1));
+    }
+
+    #[test]
+    fn una_celda_valida_se_conserva_tal_cual() {
+        let cell = CellPos::new(80, 24);
+        assert_eq!((cell.column, cell.row), (80, 24));
     }
 }

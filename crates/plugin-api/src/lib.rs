@@ -20,7 +20,7 @@ use std::time::{Duration, Instant, SystemTime};
 use gpui::AnyElement;
 use port_term_core::frame::Rgb;
 use port_term_core::input::Key;
-use port_term_core::pty::RunningApp;
+use port_term_core::pty::{PtyConfig, RunningApp};
 
 pub use config::{ConfigFile, PluginConfig};
 
@@ -244,6 +244,13 @@ pub trait SpaceHook {
     /// Consume la solicitud y devuelve `true` si se debe crear una nueva sesión.
     fn take_new_session_request(&self) -> bool {
         self.take_new_space_request()
+    }
+
+    /// Petición de una sesión nueva que ejecuta un programa propio en lugar del
+    /// shell por defecto (por ejemplo, un visor de otro proceso). `None` si el
+    /// plugin no pide nada.
+    fn take_spawn_session_request(&self) -> Option<PtyConfig> {
+        None
     }
 
     /// Notifica al plugin el identificador de la sesión recién creada en el núcleo.
@@ -772,6 +779,22 @@ impl PluginRegistry {
             }
         }
         false
+    }
+
+    /// Sesión nueva pedida por un plugin con un programa concreto, si la hay.
+    pub fn take_spawn_session_request(&self) -> Option<PtyConfig> {
+        for entry in &self.plugins {
+            let request = entry.invoke_hook(self.hook_budget, None, || {
+                entry
+                    .plugin
+                    .space_hook()
+                    .and_then(|h| h.take_spawn_session_request())
+            });
+            if request.is_some() {
+                return request;
+            }
+        }
+        None
     }
 
     /// Notifica a los plugins el ID de la sesión recién creada.

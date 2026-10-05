@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use port_term_core::input::KeyMode;
 use port_term_core::pty::PtyConfig;
-use port_term_core::session::{GridSize, Session, SessionManager};
+use port_term_core::session::{CellPos, GridSize, Session, SessionManager};
 
 /// Arranca un shell no interactivo predecible en vez del del usuario.
 fn plain_shell() -> PtyConfig {
@@ -54,6 +54,20 @@ fn which(bin: &str) -> Option<String> {
         .map(|dir| dir.join(bin))
         .find(|candidate| candidate.is_file())
         .map(|candidate| candidate.to_string_lossy().to_string())
+}
+
+/// Llena el historial del scrollback escribiendo líneas por el PTY.
+///
+/// No se apoya en que el shell interprete nada: el eco de la línea de comandos
+/// ya pinta cada línea en la rejilla, así que la cantidad de historial no
+/// depende del shell ni de su tiempo de arranque.
+fn fill_history(session: &mut Session, lines: usize) {
+    let mut bytes = String::new();
+    for index in 0..lines {
+        bytes.push_str(&format!("historial-{index}\r\n"));
+    }
+    session.write(bytes.as_bytes()).expect("escribir historial");
+    let _ = pump_until_quiet(session, Duration::from_millis(200), Duration::from_secs(10));
 }
 
 /// Regresión del cuelgue de 39 minutos: `pump` no puede bloquearse esperando
@@ -119,6 +133,281 @@ fn multiline_output_advances_rows() {
     let uno = text.find("uno").unwrap();
     let dos = text.find("dos").unwrap();
     assert!(uno < dos, "\"dos\" debe quedar debajo de \"uno\":\n{text}");
+}
+
+/// La rueda mueve el viewport sobre el scrollback: hacia arriba muestra las
+/// líneas viejas (el desplazamiento crece) y hacia abajo vuelve hacia el final.
+///
+/// Fija la convención de signo que usa el helper puro de la vista: un valor
+/// positivo de `scroll()` aleja la vista del final.
+#[test]
+fn scrolling_grows_the_offset_and_going_down_returns_to_the_bottom() {
+    let mut session = Session::spawn(plain_shell(), GridSize::new(60, 6)).expect("sesión");
+    fill_history(&mut session, 40);
+
+    assert_eq!(
+        session.frame().display_offset,
+        0,
+        "la vista arranca pegada al final"
+    );
+
+    // Rueda hacia arriba: se ven líneas más viejas y el desplazamiento crece.
+    session.scroll(3);
+    assert_eq!(
+        session.frame().display_offset,
+        3,
+        "hacia arriba el desplazamiento debe crecer"
+    );
+
+    // Rueda hacia abajo: vuelve hacia el final sin pasarse.
+    session.scroll(-2);
+    assert_eq!(
+        session.frame().display_offset,
+        1,
+        "hacia abajo el desplazamiento debe encogerse"
+    );
+
+    // Un desplazamiento mayor que el historial se recorta en el final.
+    session.scroll(-100);
+    assert_eq!(
+        session.frame().display_offset,
+        0,
+        "no se puede bajar por debajo del final"
+    );
+}
+
+/// La salida nueva conserva la vista desplazada: un programa que escribe sin
+/// parar no puede arrastrar el viewport al final en cada cuadro, o el scroll
+/// hacia arriba quedaría anulado en el mismo fotograma en que se pide.
+///
+/// Es el contrato de kitty y alacritty: leer historial es estable, y volver al
+/// presente es una decisión del usuario (desplazarse a mano).
+///
+/// No se afirma un número exacto de `display_offset` porque alacritty 0.26
+/// reancla el desplazamiento al empujar líneas al historial
+/// (`Grid::scroll_up` en `src/grid/mod.rs` lo incrementa cuando la vista no
+/// está pegada al final). El contrato observable es la región visible: las
+/// mismas líneas siguen en pantalla, y el desplazamiento nunca cae a cero.
+#[test]
+fn la_salida_nueva_conserva_la_vista_en_el_historial() {
+    let mut session = Session::spawn(plain_shell(), GridSize::new(60, 6)).expect("sesión");
+    fill_history(&mut session, 40);
+
+    session.scroll(5);
+    assert_eq!(
+        session.frame().display_offset,
+        5,
+        "la vista debe quedarse arriba tras desplazarse"
+    );
+    let vista_desplazada = text_of(&session);
+
+    // El shell imprime algo nuevo: cae al final del historial, pero la vista
+    // sigue mostrando exactamente el mismo pasado.
+    session
+        .write(b"echo linea-nueva\n")
+        .expect("escribir en el shell");
+    let _ = pump_until_quiet(
+        &mut session,
+        Duration::from_millis(200),
+        Duration::from_secs(10),
+    );
+    assert!(
+        session.frame().display_offset > 0,
+        "la salida nueva no debe arrastrar la vista al final"
+    );
+    assert_eq!(
+        text_of(&session),
+        vista_desplazada,
+        "la vista desplazada debe conservar la misma región visible"
+    );
+
+    // Bajar a mano sí vuelve al presente, y ahí aparece lo que se escribió.
+    session.scroll(-100);
+    assert_eq!(
+        session.frame().display_offset,
+        0,
+        "desplazarse hacia abajo debe devolver la vista al final"
+    );
+    let text = text_of(&session);
+    assert!(
+        text.contains("linea-nueva"),
+        "la salida nueva debe estar al final del historial:\n{text}"
+    );
+}
+
+/// Programa que pide reportes de ratón por el terminal y, si se pide, entra
+/// en pantalla alternativa: es el escenario de pi (1000 + SGR 1006 dentro de
+/// la pantalla alterna).
+///
+/// `stty raw -echo` deja la entrada en crudo, para que los reportes lleguen al
+/// programa sin esperar un salto de línea; `cat -v` devuelve a la pantalla todo
+/// lo que recibe, escapando el ESC como `^[`, y eso es lo que hace observable
+/// el reporte que PORT escribe al PTY.
+fn mouse_reporting_shell(alternate_screen: bool) -> PtyConfig {
+    let mut modos = String::from("\\033[?1000h\\033[?1006h");
+    if alternate_screen {
+        modos.push_str("\\033[?1049h");
+    }
+    PtyConfig {
+        command: "/bin/sh".to_string(),
+        args: vec![
+            "-c".to_string(),
+            format!("stty raw -echo; printf '{modos}'; cat -v"),
+        ],
+        cwd: None,
+    }
+}
+
+/// Espera a que el programa haya pedido sus modos por el terminal.
+///
+/// `pump` ya entregó a la rejilla todo lo que el programa escribió, así que
+/// cuando la salida lleva 200 ms callada los DECSET están aplicados.
+fn wait_for_modes(session: &mut Session) {
+    let _ = pump_until_quiet(session, Duration::from_millis(200), Duration::from_secs(10));
+}
+
+/// Con reportes de ratón activos, la rueda se reenvía al programa como reporte
+/// SGR con la celda bajo el puntero, en vez de mover el scrollback local.
+#[test]
+fn la_rueda_se_reenvia_al_programa_cuando_hay_reportes_de_raton() {
+    let mut session =
+        Session::spawn(mouse_reporting_shell(false), GridSize::new(60, 6)).expect("sesión");
+    wait_for_modes(&mut session);
+
+    let celda = CellPos::new(5, 3);
+
+    // Rueda hacia arriba: código 64.
+    assert!(
+        session.wheel(1, celda, false),
+        "la rueda con reportes activos debe consumirse"
+    );
+    let text = pump_until_quiet(
+        &mut session,
+        Duration::from_millis(200),
+        Duration::from_secs(10),
+    );
+    assert!(
+        text.contains("^[[<64;5;3M"),
+        "falta el reporte de rueda arriba con la celda bajo el puntero:\n{text}"
+    );
+    assert_eq!(
+        session.frame().display_offset,
+        0,
+        "reenviar la rueda no debe mover el scrollback local"
+    );
+
+    // Rueda hacia abajo: código 65.
+    assert!(session.wheel(-1, celda, false));
+    let text = pump_until_quiet(
+        &mut session,
+        Duration::from_millis(200),
+        Duration::from_secs(10),
+    );
+    assert!(
+        text.contains("^[[<65;5;3M"),
+        "falta el reporte de rueda abajo:\n{text}"
+    );
+}
+
+/// Shift es la salida de emergencia estándar: aunque el programa pida reportes
+/// de ratón, con Shift la rueda mueve el scrollback local y no se le envía nada.
+#[test]
+fn shift_mas_rueda_desplaza_el_historial_aunque_haya_reportes() {
+    let mut session =
+        Session::spawn(mouse_reporting_shell(false), GridSize::new(60, 6)).expect("sesión");
+    wait_for_modes(&mut session);
+    fill_history(&mut session, 40);
+
+    assert!(session.wheel(3, CellPos::new(5, 3), true));
+    assert_eq!(
+        session.frame().display_offset,
+        3,
+        "con Shift la rueda debe desplazar el historial local"
+    );
+    assert!(
+        !text_of(&session).contains("^[[<"),
+        "con Shift no debe salir ningún reporte al programa:\n{}",
+        text_of(&session)
+    );
+}
+
+/// Sin reportes de ratón activos la rueda se comporta como siempre: mueve el
+/// scrollback local del núcleo.
+#[test]
+fn sin_reportes_de_raton_la_rueda_desplaza_el_historial() {
+    let mut session = Session::spawn(plain_shell(), GridSize::new(60, 6)).expect("sesión");
+    fill_history(&mut session, 40);
+
+    assert!(session.wheel(3, CellPos::new(5, 3), false));
+    assert_eq!(
+        session.frame().display_offset,
+        3,
+        "sin reportes la rueda debe desplazar el historial local"
+    );
+
+    // Un evento sin desplazamiento no consume nada ni mueve la vista.
+    assert!(!session.wheel(0, CellPos::new(5, 3), false));
+    assert_eq!(
+        session.frame().display_offset,
+        3,
+        "una rueda nula no debe mover la vista"
+    );
+}
+
+/// El caso real de pi: pantalla alterna con reportes de ratón activos. La
+/// pantalla alterna no aporta nada aquí porque el reporte se reenvía al
+/// programa; el scrollback local no se toca.
+#[test]
+fn la_pantalla_alterna_reenvia_la_rueda_si_el_programa_pide_reportes() {
+    let mut session =
+        Session::spawn(mouse_reporting_shell(true), GridSize::new(60, 6)).expect("sesión");
+    wait_for_modes(&mut session);
+
+    assert!(session.wheel(1, CellPos::new(5, 3), false));
+    let text = pump_until_quiet(
+        &mut session,
+        Duration::from_millis(200),
+        Duration::from_secs(10),
+    );
+    assert!(
+        text.contains("^[[<64;5;3M"),
+        "en pantalla alterna con reportes la rueda también se reenvía:\n{text}"
+    );
+}
+
+/// En pantalla alterna sin reportes de ratón no hay historial que desplazar:
+/// alacritty no guarda scrollback en la pantalla alterna, así que el
+/// desplazamiento local queda en cero. Es el comportamiento aceptado.
+#[test]
+fn en_pantalla_alterna_sin_reportes_no_hay_historial_que_desplazar() {
+    let mut session = Session::spawn(plain_shell(), GridSize::new(60, 6)).expect("sesión");
+    fill_history(&mut session, 40);
+
+    // En la pantalla primaria sí hay historial: el desplazamiento crece.
+    assert!(session.wheel(3, CellPos::new(5, 3), false));
+    assert_eq!(
+        session.frame().display_offset,
+        3,
+        "la primaria sí tiene historial"
+    );
+    session.scroll(-100);
+
+    // El programa entra en la pantalla alterna, que no tiene scrollback.
+    session
+        .write(b"printf '\\033[?1049h'\n")
+        .expect("entrar en pantalla alterna");
+    let _ = pump_until_quiet(
+        &mut session,
+        Duration::from_millis(200),
+        Duration::from_secs(10),
+    );
+
+    assert!(session.wheel(3, CellPos::new(5, 3), false));
+    assert_eq!(
+        session.frame().display_offset,
+        0,
+        "la pantalla alterna no tiene historial local que desplazar"
+    );
 }
 
 #[test]
@@ -227,6 +516,70 @@ fn fish_device_queries_are_replied_automatically_without_blocking() {
     assert!(
         interactive,
         "fish debe responder con el prompt interactivo de inmediato sin esperar 10s"
+    );
+}
+
+/// Una sesión creada con un programa propio ejecuta ese programa, escribe su
+/// salida en la rejilla y queda activa; no arranca el shell por defecto.
+#[test]
+fn spawn_session_with_runs_the_given_program_and_activates_it() {
+    let mut manager =
+        SessionManager::new(plain_shell(), GridSize::new(60, 10)).expect("crear manager");
+    assert_eq!(manager.active_index(), 0);
+
+    let program = which("echo").expect("echo debe estar en el PATH");
+    let config = PtyConfig {
+        command: program,
+        args: vec!["visor-de-port".to_string()],
+        cwd: None,
+    };
+    let id = manager
+        .spawn_session_with(config)
+        .expect("crear sesión con programa propio");
+
+    assert_eq!(id, 1, "el identificador es el siguiente libre");
+    assert_eq!(manager.len(), 2);
+    assert_eq!(
+        manager.active_index(),
+        id,
+        "la sesión recién creada debe quedar activa"
+    );
+
+    let start = Instant::now();
+    let mut text = String::new();
+    while start.elapsed() < Duration::from_secs(10) {
+        manager.pump();
+        text = manager
+            .frame()
+            .rows
+            .iter()
+            .map(|r| r.runs.iter().map(|x| x.text.as_str()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        if text.contains("visor-de-port") {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        text.contains("visor-de-port"),
+        "el programa indicado debe escribir en la rejilla, no el shell por defecto:\n{text}"
+    );
+
+    // La sesión inicial sigue siendo el shell silencioso: la salida del visor
+    // no puede haberse colado en ella.
+    assert!(manager.select(0));
+    manager.pump();
+    let first = manager
+        .frame()
+        .rows
+        .iter()
+        .map(|r| r.runs.iter().map(|x| x.text.as_str()).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        !first.contains("visor-de-port"),
+        "la sesión 0 debe seguir con su shell por defecto:\n{first}"
     );
 }
 
