@@ -141,6 +141,7 @@
             HOME = "/tmp/port-home";
             preBuild = ''
               mkdir -p "$HOME"
+              python3 scripts/patch-gpui.py /build
             '';
 
             # `doCheck` queda desactivado a proposito: casi toda la suite de

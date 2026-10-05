@@ -85,6 +85,8 @@ export RUSTFLAGS
 export LIBRARY_PATH="$RUNTIME_LIBS"
 export PKG_CONFIG_PATH="/usr/lib/x86_64-linux-gnu/pkgconfig"
 
+cargo fetch --locked || cargo fetch
+python3 /src/scripts/patch-gpui.py /root/.cargo/registry /cargo
 cargo build --release --locked -p port
 
 mkdir -p /src/target/portable/bin
@@ -133,6 +135,8 @@ build_native() {
   [ "$missing" -eq 0 ] || die "instala las librerias de desarrollo o usa docker"
 
   command -v patchelf >/dev/null 2>&1 || die "patchelf es necesario"
+  cargo fetch --locked || cargo fetch
+  python3 "$ROOT/scripts/patch-gpui.py"
   cargo build --release --locked -p port
 
   mkdir -p target/portable/bin

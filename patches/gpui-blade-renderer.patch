@@ -1,0 +1,21 @@
+--- a/src/platform/blade/blade_renderer.rs
++++ b/src/platform/blade/blade_renderer.rs
+@@ -644,10 +644,17 @@
+         self.command_encoder.start();
+         self.atlas.before_frame(&mut self.command_encoder);
+ 
+-        let frame = {
++        let mut frame = {
+             profiling::scope!("acquire frame");
+             self.surface.acquire_frame()
+         };
++        if frame.image_index.is_none() {
++            let width = DevicePixels(self.surface_config.size.width as i32);
++            let height = DevicePixels(self.surface_config.size.height as i32);
++            self.update_drawable_size_impl(Size { width, height }, true);
++            frame = self.surface.acquire_frame();
++        }
++
+         self.command_encoder.init_texture(frame.texture());
+ 
+         let globals = GlobalParams {
