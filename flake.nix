@@ -110,7 +110,9 @@
 
             postInstall = ''
               install -Dm644 assets/port.desktop $out/share/applications/port.desktop
+              install -Dm644 assets/icon-256.png $out/share/icons/hicolor/256x256/apps/port-terminal.png
               install -Dm644 assets/icon-256.png $out/share/icons/hicolor/256x256/apps/port.png
+              install -Dm644 assets/icon-256.png $out/share/pixmaps/port-terminal.png
               install -Dm644 assets/icon-256.png $out/share/pixmaps/port.png
             '';
 

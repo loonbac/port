@@ -52,7 +52,7 @@ Name=PORT
 GenericName=Terminal Emulator
 Comment=Plugin-Oriented Rust Terminal
 Exec=$BIN
-Icon=$BIN
+Icon=port-terminal
 Terminal=false
 Categories=System;TerminalEmulator;
 Keywords=terminal;shell;prompt;command;
@@ -79,6 +79,7 @@ install_icon() {
   local source_icon="$repo_root/assets/icon-256.png"
   if [ -f "$source_icon" ]; then
     cp "$source_icon" "$dest/$BIN.png"
+    cp "$source_icon" "$dest/port-terminal.png"
     return 0
   fi
 
