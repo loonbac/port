@@ -93,21 +93,8 @@
 
             buildAndTestSubdir = ".";
 
-            # Los plugins son dependencias git desde un tag. `importCargoLock`
-            # los vendoriza y exige un hash por commit; todos vienen del mismo
-            # commit de port-plugins, asi que comparten hash. Si se publica un
-            # tag nuevo hay que recalcularlo con:
-            #   nix hash path --sri <port-plugins sin .git>
             cargoLock = {
               lockFile = ./Cargo.lock;
-              outputHashes = {
-                "port-plugin-close-guard-0.1.0" = "sha256-A6LCkUE4PpN9p8qJhcyAHxSvzeg46C52KPxDDDky0fY=";
-                "port-plugin-font-0.1.0" = "sha256-A6LCkUE4PpN9p8qJhcyAHxSvzeg46C52KPxDDDky0fY=";
-                "port-plugin-font-zoom-0.1.0" = "sha256-A6LCkUE4PpN9p8qJhcyAHxSvzeg46C52KPxDDDky0fY=";
-                "port-plugin-herdr-0.1.0" = "sha256-A6LCkUE4PpN9p8qJhcyAHxSvzeg46C52KPxDDDky0fY=";
-                "port-plugin-shortcuts-0.1.0" = "sha256-A6LCkUE4PpN9p8qJhcyAHxSvzeg46C52KPxDDDky0fY=";
-                "port-plugin-transparency-0.1.0" = "sha256-A6LCkUE4PpN9p8qJhcyAHxSvzeg46C52KPxDDDky0fY=";
-              };
             };
 
             postInstall = ''

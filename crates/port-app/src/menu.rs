@@ -368,6 +368,63 @@ fn render_browsing(
     let compiled_count = compiled_plugins.len();
     let external_count = state.external_plugins.len();
 
+    // Si la lista está vacía, recomienda instalar plugins
+    if compiled_count == 0 && external_count == 0 {
+        list = list.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(6.0))
+                .p(px(14.0))
+                .rounded(px(6.0))
+                .bg(rgb(0x161b22))
+                .border_1()
+                .border_color(rgb(0x30363d))
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(8.0))
+                        .child(
+                            div()
+                                .px(px(6.0))
+                                .py(px(2.0))
+                                .rounded(px(4.0))
+                                .bg(rgb(0x21262d))
+                                .text_size(px(11.0))
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(rgb(0xd29922))
+                                .child("EMPTY"),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(13.0))
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(rgb(0xf0f6fc))
+                                .child("No plugins installed"),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(rgb(0x8b949e))
+                        .child("PORT runs as a pure terminal core with 0 bundled plugins. Extend tabs, spaces, zoom, and appearance by installing plugins:"),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(3.0))
+                        .mt(px(4.0))
+                        .text_size(px(11.0))
+                        .text_color(rgb(0x58a6ff))
+                        .child("• Official suite: https://github.com/loonbac/port-plugins")
+                        .child("• Run in terminal: port plugin add <git-url-or-path>"),
+                ),
+        );
+    }
+
     // 1. Plugins compilados del núcleo
     for (i, p) in compiled_plugins.iter().enumerate() {
         let is_selected = i == state.selected_index;

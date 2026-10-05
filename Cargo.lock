@@ -3862,12 +3862,6 @@ version = "0.1.2"
 dependencies = [
  "gpui",
  "port-plugin-api",
- "port-plugin-close-guard",
- "port-plugin-font",
- "port-plugin-font-zoom",
- "port-plugin-herdr",
- "port-plugin-shortcuts",
- "port-plugin-transparency",
  "port-term-core",
 ]
 
@@ -3884,64 +3878,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "port-plugin-close-guard"
-version = "0.1.0"
-source = "git+https://github.com/loonbac/port-plugins.git?tag=v0.1.2#39fe79fb89e9db93ca2175e4b7c00689b84caaa3"
-dependencies = [
- "gpui",
- "port-plugin-api",
-]
-
-[[package]]
-name = "port-plugin-font"
-version = "0.1.0"
-source = "git+https://github.com/loonbac/port-plugins.git?tag=v0.1.2#39fe79fb89e9db93ca2175e4b7c00689b84caaa3"
-dependencies = [
- "port-plugin-api",
-]
-
-[[package]]
-name = "port-plugin-font-zoom"
-version = "0.1.0"
-source = "git+https://github.com/loonbac/port-plugins.git?tag=v0.1.2#39fe79fb89e9db93ca2175e4b7c00689b84caaa3"
-dependencies = [
- "port-plugin-api",
- "port-term-core",
-]
-
-[[package]]
-name = "port-plugin-herdr"
-version = "0.1.0"
-source = "git+https://github.com/loonbac/port-plugins.git?tag=v0.1.2#39fe79fb89e9db93ca2175e4b7c00689b84caaa3"
-dependencies = [
- "gpui",
- "port-plugin-api",
- "port-term-core",
-]
-
-[[package]]
 name = "port-plugin-sdk"
 version = "0.1.2"
 dependencies = [
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "port-plugin-shortcuts"
-version = "0.1.0"
-source = "git+https://github.com/loonbac/port-plugins.git?tag=v0.1.2#39fe79fb89e9db93ca2175e4b7c00689b84caaa3"
-dependencies = [
- "port-plugin-api",
- "port-term-core",
-]
-
-[[package]]
-name = "port-plugin-transparency"
-version = "0.1.0"
-source = "git+https://github.com/loonbac/port-plugins.git?tag=v0.1.2#39fe79fb89e9db93ca2175e4b7c00689b84caaa3"
-dependencies = [
- "port-plugin-api",
 ]
 
 [[package]]

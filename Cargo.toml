@@ -26,19 +26,6 @@ libc = "=0.2.189"
 # trait contra un crate y los plugins contra otro, y no coincidirían.
 port-term-core = { path = "crates/term-core" }
 port-plugin-api = { path = "crates/plugin-api" }
-port-plugin-transparency = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.2" }
-port-plugin-font = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.2" }
-port-plugin-font-zoom = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.2" }
-port-plugin-shortcuts = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.2" }
-port-plugin-herdr = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.2" }
-port-plugin-close-guard = { git = "https://github.com/loonbac/port-plugins.git", tag = "v0.1.2" }
-
-# Los plugins llegan como dependencias git, pero deben usar el API y el core de
-# ESTE repo: son el mismo código, no dos copias. Sin esto, `Plugin` se resuelve
-# a dos crates distintos y el registro no compila.
-[patch."https://github.com/loonbac/port.git"]
-port-term-core = { path = "crates/term-core" }
-port-plugin-api = { path = "crates/plugin-api" }
 
 [profile.dev]
 opt-level = 1

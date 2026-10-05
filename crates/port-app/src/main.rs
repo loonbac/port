@@ -17,13 +17,7 @@ use gpui::prelude::*;
 use gpui::{
     px, size, App, Application, Bounds, WindowBackgroundAppearance, WindowBounds, WindowOptions,
 };
-use port_plugin_api::{KeyAction, PluginRegistry};
-use port_plugin_close_guard::CloseGuardPlugin;
-use port_plugin_font::FontPlugin;
-use port_plugin_font_zoom::FontZoomPlugin;
-use port_plugin_herdr::HerdrPlugin;
-use port_plugin_shortcuts::ShortcutsPlugin;
-use port_plugin_transparency::TransparencyPlugin;
+use port_plugin_api::{CloseDecision, KeyAction, PluginRegistry};
 use port_term_core::input::Key;
 use port_term_core::pty::PtyConfig;
 use port_term_core::session::SessionManager;
@@ -57,25 +51,7 @@ fn run_terminal() {
     Application::new().run(|cx: &mut App| {
         // Registro de plugins y carga de configuración central
         let mut plugin_registry = PluginRegistry::new();
-        plugin_registry.register(TransparencyPlugin::default());
-        plugin_registry.register(FontPlugin::new("FiraCode Nerd Font Mono"));
-        plugin_registry.register(FontZoomPlugin::new(BASE_FONT_SIZE));
-
-        // Los atajos de zoom se registran en el plugin de atajos, que es el
-        // unico dueno de las teclas. La llamada se resuelve por servicio, asi
-        // que main no necesita conocer la implementacion de font-zoom.
-        let shortcuts = ShortcutsPlugin::new().with_services(plugin_registry.services());
-        shortcuts.bind_service("ctrl+=", "font-zoom", "zoom_in");
-        shortcuts.bind_service("ctrl+shift+=", "font-zoom", "zoom_in");
-        shortcuts.bind_service("ctrl+-", "font-zoom", "zoom_out");
-        shortcuts.bind_service("ctrl+0", "font-zoom", "reset");
-        plugin_registry.register(shortcuts);
-        plugin_registry.register(HerdrPlugin::new());
-
-        // Guardián de cierre: pregunta si hay programas corriendo al cerrar.
-        let close_guard = CloseGuardPlugin::new();
         let close_prompt = Rc::new(RefCell::new(ClosePromptState::default()));
-        plugin_registry.register(close_guard.clone());
 
         // Plugins externos instalados con `port plugin add` o desde el menú.
         // Se cargan y arrancan sin bloquear el inicio si alguno falla.
@@ -396,11 +372,11 @@ fn run_terminal() {
                         .collect()
                 };
 
-                let ask = close_guard.request_close(bins);
+                let ask = plugins_for_close.borrow().close_decision() == CloseDecision::Confirm;
                 if ask {
                     {
                         let mut prompt = prompt_for_close.borrow_mut();
-                        prompt.programs = close_guard.pending_programs();
+                        prompt.programs = bins;
                         prompt.selected = 0; // siempre sobre la opción segura
                         prompt.open = true;
                     }
