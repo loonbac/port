@@ -58,6 +58,11 @@ plugin can replace core behaviour without the core knowing it exists.
 | `Ctrl` `Alt` `T` | New space (opens the sidebar) |
 | `Alt` `1`..`9` | Switch space |
 | `Ctrl` `+` / `Ctrl` `-` / `Ctrl` `0` | Zoom font in / out / reset (via `shortcuts`) |
+| `Ctrl` `Shift` `C` | Copy the terminal selection to the clipboard |
+| `Ctrl` `Shift` `V` | Paste the clipboard into the terminal |
+
+Mouse: drag to select, double-click a word, triple-click a line. Releasing the
+button copies the selection to the clipboard.
 
 ## Configuration
 

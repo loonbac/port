@@ -63,6 +63,11 @@ sin que el núcleo sepa que existe.
 | `Ctrl` `Alt` `T` | Nuevo espacio (abre la barra lateral) |
 | `Alt` `1`..`9` | Cambiar de espacio |
 | `Ctrl` `+` / `Ctrl` `-` / `Ctrl` `0` | Aumentar / reducir / reiniciar fuente (vía `shortcuts`) |
+| `Ctrl` `Shift` `C` | Copiar la selección de la terminal al portapapeles |
+| `Ctrl` `Shift` `V` | Pegar el portapapeles en la terminal |
+
+Ratón: arrastrar selecciona, doble clic selecciona la palabra y triple clic la
+línea completa. Al soltar el botón la selección se copia al portapapeles.
 
 ## Configuración
 

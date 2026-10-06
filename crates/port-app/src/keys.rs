@@ -7,6 +7,34 @@
 use gpui::Keystroke;
 use port_term_core::input::Key;
 
+/// Acción de edición que PORT resuelve antes de mandar bytes al PTY.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditAction {
+    /// Copiar la selección activa al portapapeles.
+    Copy,
+    /// Pegar el portapapeles en el programa activo.
+    Paste,
+}
+
+/// Reconoce `Ctrl+Shift+C` y `Ctrl+Shift+V` como copiar y pegar de PORT.
+///
+/// Exige `Ctrl` y `Shift` a la vez y ningún `Alt`, de modo que `Ctrl+C` y
+/// `Ctrl+V` pelados sigan llegando íntegros al programa: el primero es la
+/// señal de interrupción y el segundo el pegado literal de la shell. Devuelve
+/// `None` para cualquier otra tecla o combinación de modificadores.
+pub fn edit_action(key: &Key) -> Option<EditAction> {
+    if !key.ctrl || !key.shift || key.alt {
+        return None;
+    }
+    if key.key.eq_ignore_ascii_case("c") {
+        Some(EditAction::Copy)
+    } else if key.key.eq_ignore_ascii_case("v") {
+        Some(EditAction::Paste)
+    } else {
+        None
+    }
+}
+
 /// Convierte una pulsación en la tecla que entiende el núcleo.
 ///
 /// Devuelve `None` solo si no hay nada que codificar (por ejemplo, pulsar una
@@ -147,6 +175,53 @@ mod tests {
     #[test]
     fn modifier_without_a_key_sends_nothing() {
         assert_eq!(bytes("shift", None, none()), None);
+    }
+
+    fn tecla(key: &str, ctrl: bool, shift: bool, alt: bool) -> Key {
+        let mut k = Key::new(key);
+        k.ctrl = ctrl;
+        k.shift = shift;
+        k.alt = alt;
+        k
+    }
+
+    /// `Ctrl+Shift+C` copia y `Ctrl+Shift+V` pega: son atajos de PORT, no bytes.
+    #[test]
+    fn ctrl_shift_c_copia_y_ctrl_shift_v_pega() {
+        assert_eq!(
+            edit_action(&tecla("c", true, true, false)),
+            Some(EditAction::Copy)
+        );
+        assert_eq!(
+            edit_action(&tecla("v", true, true, false)),
+            Some(EditAction::Paste)
+        );
+    }
+
+    /// Falta `Ctrl` o falta `Shift`: la combinación no es el atajo de edición.
+    #[test]
+    fn sin_ctrl_o_sin_shift_no_hay_atajo_de_edicion() {
+        assert_eq!(edit_action(&tecla("c", true, false, false)), None);
+        assert_eq!(edit_action(&tecla("c", false, true, false)), None);
+        assert_eq!(edit_action(&tecla("v", true, false, false)), None);
+        assert_eq!(edit_action(&tecla("v", false, true, false)), None);
+        // `Alt` añadido tampoco vale como atajo de edición.
+        assert_eq!(edit_action(&tecla("c", true, true, true)), None);
+    }
+
+    /// Otras letras con la misma combinación no son atajos de edición.
+    #[test]
+    fn otras_letras_con_ctrl_shift_no_disparan_nada() {
+        assert_eq!(edit_action(&tecla("a", true, true, false)), None);
+        assert_eq!(edit_action(&tecla("x", true, true, false)), None);
+    }
+
+    /// `Ctrl+C` y `Ctrl+V` pelados siguen siendo del shell: la señal de
+    /// interrupción y el pegado literal, no el portapapeles de PORT.
+    #[test]
+    fn ctrl_c_y_ctrl_v_pelados_no_se_tragan() {
+        assert_eq!(edit_action(&tecla("c", true, false, false)), None);
+        assert_eq!(edit_action(&tecla("v", true, false, false)), None);
     }
 
     #[test]

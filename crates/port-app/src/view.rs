@@ -16,13 +16,13 @@ use std::rc::Rc;
 
 use gpui::prelude::*;
 use gpui::{
-    anchored, canvas, deferred, div, fill, point, px, rgb, size, App, Bounds, Context, FocusHandle,
-    Font, FontFallbacks, FontStyle, FontWeight, MouseButton, Pixels, Render, ScrollDelta,
-    ScrollWheelEvent, TextRun, Window,
+    anchored, canvas, deferred, div, fill, point, px, rgb, size, App, Bounds, ClipboardItem,
+    Context, FocusHandle, Font, FontFallbacks, FontStyle, FontWeight, MouseButton, Pixels, Render,
+    ScrollDelta, ScrollWheelEvent, TextRun, Window,
 };
 use port_plugin_api::PluginRegistry;
 use port_term_core::frame::{Frame, Rgb, Run, Style};
-use port_term_core::session::{CellPos, SessionManager};
+use port_term_core::session::{CellPos, SelectionKind, SessionManager};
 
 use crate::metrics::Metrics;
 
@@ -36,6 +36,10 @@ pub struct TerminalView {
     plugins: Rc<RefCell<PluginRegistry>>,
     menu_state: Rc<RefCell<MenuState>>,
     close_prompt: Rc<RefCell<ClosePromptState>>,
+    /// Estado del arrastre de selección. Vive en la vista, no en el render: un
+    /// `window.refresh()` reconstruye los manejadores y la bandera debe seguir
+    /// encendida entre un movimiento del ratón y el siguiente.
+    drag_selecting: Rc<Cell<bool>>,
 }
 
 impl TerminalView {
@@ -56,6 +60,7 @@ impl TerminalView {
             plugins,
             menu_state,
             close_prompt,
+            drag_selecting: Rc::new(Cell::new(false)),
         }
     }
 }
@@ -183,6 +188,10 @@ impl Render for TerminalView {
         // hay bajo el puntero cuando el programa pide reportes de ratón.
         let grid_origin: Rc<Cell<(f32, f32)>> = Rc::new(Cell::new((0.0, 0.0)));
 
+        // Clon del estado de arrastre que vive en la vista: los manejadores lo
+        // comparten y el clon apunta a la misma bandera entre repintados.
+        let drag_selecting = Rc::clone(&self.drag_selecting);
+
         // 1. Barras laterales izquierdas (full height)
         for sidebar in left_sidebars {
             root = root.child(sidebar);
@@ -234,6 +243,85 @@ impl Render for TerminalView {
                         if consumed {
                             window.refresh();
                         }
+                    }
+                })
+                // Selección con el ratón: un clic ancla la celda, doble clic la
+                // palabra y triple clic la línea. El arrastre extiende la
+                // selección y al soltar se copia al portapapeles.
+                .on_mouse_down(MouseButton::Left, {
+                    let session = Rc::clone(&self.session_manager);
+                    let grid_origin = Rc::clone(&grid_origin);
+                    let drag_selecting = Rc::clone(&drag_selecting);
+                    let cell_width = metrics.cell_width;
+                    let cell_height = metrics.cell_height;
+                    let padding = metrics.padding;
+                    move |event, window, _cx| {
+                        let (origin_x, origin_y) = grid_origin.get();
+                        let cell = cell_under_pointer(
+                            event.position.x.into(),
+                            event.position.y.into(),
+                            origin_x + padding,
+                            origin_y + padding,
+                            cell_width,
+                            cell_height,
+                        );
+                        let kind = selection_kind_for_click_count(event.click_count);
+                        session
+                            .borrow_mut()
+                            .active_session_mut()
+                            .start_selection(cell, kind);
+                        drag_selecting.set(true);
+                        window.refresh();
+                    }
+                })
+                .on_mouse_move({
+                    let session = Rc::clone(&self.session_manager);
+                    let grid_origin = Rc::clone(&grid_origin);
+                    let drag_selecting = Rc::clone(&drag_selecting);
+                    let cell_width = metrics.cell_width;
+                    let cell_height = metrics.cell_height;
+                    let padding = metrics.padding;
+                    move |event, window, _cx| {
+                        // Solo se extiende durante un arrastre: gpui entrega
+                        // movimientos siempre que el puntero esté encima, y sin
+                        // la bandera un simple pasar por encima movería la
+                        // selección.
+                        if !drag_selecting.get() {
+                            return;
+                        }
+                        let (origin_x, origin_y) = grid_origin.get();
+                        let cell = cell_under_pointer(
+                            event.position.x.into(),
+                            event.position.y.into(),
+                            origin_x + padding,
+                            origin_y + padding,
+                            cell_width,
+                            cell_height,
+                        );
+                        session
+                            .borrow_mut()
+                            .active_session_mut()
+                            .extend_selection(cell);
+                        window.refresh();
+                    }
+                })
+                // Soltar dentro del contenedor y soltar fuera de él comparten
+                // el cierre: si el arrastre termina en el borde, `on_mouse_up`
+                // no dispara y la bandera quedaría encendida.
+                .on_mouse_up(MouseButton::Left, {
+                    let session = Rc::clone(&self.session_manager);
+                    let drag_selecting = Rc::clone(&drag_selecting);
+                    move |_event, window, cx| {
+                        finish_drag(&session, &drag_selecting, cx);
+                        window.refresh();
+                    }
+                })
+                .on_mouse_up_out(MouseButton::Left, {
+                    let session = Rc::clone(&self.session_manager);
+                    let drag_selecting = Rc::clone(&drag_selecting);
+                    move |_event, window, cx| {
+                        finish_drag(&session, &drag_selecting, cx);
+                        window.refresh();
                     }
                 })
                 .child(
@@ -332,6 +420,20 @@ fn wheel_lines(delta: ScrollDelta, line_height: f32) -> i32 {
     }
 }
 
+/// Traduce el recuento de clics al tipo de selección del núcleo.
+///
+/// Un clic selecciona celdas sueltas, el doble clic la palabra bajo el puntero
+/// y el triple clic la línea entera. Cualquier otro recuento (un cuarto clic o
+/// un valor inesperado) se comporta como un clic simple, para que el gesto
+/// nunca quede sin definir.
+fn selection_kind_for_click_count(click_count: usize) -> SelectionKind {
+    match click_count {
+        2 => SelectionKind::Word,
+        3 => SelectionKind::Line,
+        _ => SelectionKind::Simple,
+    }
+}
+
 /// Celda (1-based) bajo el puntero, para el reporte SGR del ratón.
 ///
 /// El puntero llega en coordenadas de ventana y `origin` es la esquina del
@@ -348,6 +450,25 @@ fn cell_under_pointer(
     let column = ((pointer_x - origin_x) / cell_width).floor() as i32 + 1;
     let row = ((pointer_y - origin_y) / cell_height).floor() as i32 + 1;
     CellPos::new(column, row)
+}
+
+/// Cierra un arrastre de selección: apaga la bandera y copia lo seleccionado.
+///
+/// Se ejecuta tanto al soltar dentro del contenedor como fuera de él. Solo
+/// escribe en el portapapeles cuando hay texto real, para no pisar lo que el
+/// usuario tuviera copiado con una selección vacía.
+fn finish_drag(
+    session: &Rc<RefCell<SessionManager>>,
+    drag_selecting: &Rc<Cell<bool>>,
+    cx: &mut App,
+) {
+    drag_selecting.set(false);
+    let text = session.borrow().active_session().selection_text();
+    if let Some(text) = text {
+        if !text.is_empty() {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+        }
+    }
 }
 
 /// Estado del diálogo de confirmación de cierre.
@@ -541,6 +662,18 @@ fn render_close_prompt(
     .priority(200)
 }
 
+/// Fondo translúcido del resaltado de selección.
+///
+/// Reutiliza el azul acento que ya usa el diálogo de cierre de esta misma
+/// vista en lugar de inventar una paleta nueva. Es un azul medio, no un gris:
+/// un tono neutro se pierde igual sobre fondos oscuros que claros. Se pinta
+/// por debajo de los glifos, así que el texto conserva su color y se lee sobre
+/// el resaltado en cualquier tema sin recolorearse.
+const SELECTION_BG: Rgb = Rgb::new(0x58, 0xa6, 0xff);
+/// Opacidad del resaltado: suficiente para distinguir el rango, tenue para no
+/// tapar el texto que va encima.
+const SELECTION_BG_OPACITY: f32 = 0.35;
+
 /// Pinta el cuadro completo: quads de fondo, glifos geométricos y texto.
 #[allow(clippy::too_many_arguments)]
 fn paint_frame(
@@ -591,6 +724,17 @@ fn paint_frame(
     for (row_index, row) in frame.rows.iter().enumerate() {
         let top = origin_y + cell_height * row_index as f32;
         let mut left = origin_x;
+
+        // El resaltado va antes que los runs de la fila: el fondo y los glifos
+        // se pintan encima y el texto sigue legible sobre el azul translúcido.
+        if let Some(span) = row.selection {
+            let selected_x = origin_x + cell_width * span.start as f32;
+            let selected_width = cell_width * (span.end.saturating_sub(span.start) + 1) as f32;
+            window.paint_quad(fill(
+                Bounds::new(point(selected_x, top), size(selected_width, cell_height)),
+                color(SELECTION_BG).opacity(SELECTION_BG_OPACITY),
+            ));
+        }
 
         for (run_index, run) in row.runs.iter().enumerate() {
             let is_cursor = frame
@@ -925,6 +1069,22 @@ mod tests {
         assert_eq!(wheel_lines(delta, LINE_HEIGHT), 0);
         let delta = ScrollDelta::Lines(point(9.0, 0.0));
         assert_eq!(wheel_lines(delta, LINE_HEIGHT), 0);
+    }
+
+    /// Un clic selecciona una celda, el doble la palabra y el triple la línea.
+    #[test]
+    fn cada_recuento_de_clics_pide_su_tipo_de_seleccion() {
+        assert_eq!(selection_kind_for_click_count(1), SelectionKind::Simple);
+        assert_eq!(selection_kind_for_click_count(2), SelectionKind::Word);
+        assert_eq!(selection_kind_for_click_count(3), SelectionKind::Line);
+    }
+
+    /// Un cuarto clic (o cualquier recuento raro) vuelve al clic simple: el
+    /// gesto nunca deja la selección sin definir.
+    #[test]
+    fn mas_de_tres_clics_se_comportan_como_uno() {
+        assert_eq!(selection_kind_for_click_count(4), SelectionKind::Simple);
+        assert_eq!(selection_kind_for_click_count(0), SelectionKind::Simple);
     }
 
     /// La rejilla empieza en el origen del área de pintado: la esquina superior

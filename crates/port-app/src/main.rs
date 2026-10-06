@@ -17,7 +17,8 @@ use std::time::Duration;
 
 use gpui::prelude::*;
 use gpui::{
-    px, size, App, Application, Bounds, WindowBackgroundAppearance, WindowBounds, WindowOptions,
+    px, size, App, Application, Bounds, ClipboardItem, WindowBackgroundAppearance, WindowBounds,
+    WindowOptions,
 };
 use port_plugin_api::{CloseDecision, KeyAction, PluginRegistry};
 use port_plugin_herdr::HerdrPlugin;
@@ -535,6 +536,38 @@ fn run_terminal() {
                             }
                         }
                         MenuAction::Refresh | MenuAction::None => {}
+                    }
+                    window.refresh();
+                    return;
+                }
+
+                // Copiar y pegar de PORT: `Ctrl+Shift+C` y `Ctrl+Shift+V`. Van
+                // antes de la ruta que manda bytes al PTY para que nunca lleguen
+                // a la shell, y después de la rama del menú para no pisar su
+                // propio `Ctrl+V` del campo de URL.
+                if let Some(action) = keys::edit_action(&key) {
+                    match action {
+                        keys::EditAction::Copy => {
+                            let text = session_for_keys
+                                .borrow()
+                                .active_session()
+                                .selection_text();
+                            if let Some(text) = text {
+                                if !text.is_empty() {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(text));
+                                }
+                            }
+                        }
+                        keys::EditAction::Paste => {
+                            if let Some(text) =
+                                cx.read_from_clipboard().and_then(|item| item.text())
+                            {
+                                session_for_keys
+                                    .borrow_mut()
+                                    .active_session_mut()
+                                    .paste(&text);
+                            }
+                        }
                     }
                     window.refresh();
                     return;
