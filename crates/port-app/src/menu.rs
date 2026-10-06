@@ -45,6 +45,8 @@ pub enum MenuAction {
     ToggleCompiled(usize),
     /// Alternar el estado activo/inactivo del plugin externo en el índice dado.
     ToggleExternal(usize),
+    /// Desinstalar el plugin externo en el índice dado (relativo a `external_plugins`).
+    UninstallExternal(usize),
     /// Iniciar la instalación en segundo plano para la URL indicada.
     StartInstall(String),
     /// El menú cambió internamente y requiere redibujar la ventana.
@@ -72,6 +74,11 @@ pub struct MenuState {
     pub mode: MenuMode,
     /// Plugins externos instalados o cargados en la sesión.
     pub external_plugins: Vec<ExternalPluginInfo>,
+    /// Índice (relativo a `external_plugins`) cuya desinstalación está armada.
+    ///
+    /// El primer `x` solo arma; el segundo confirma. Se guarda el índice para
+    /// comprobarlo al ejecutar: si el foco cambió de fila, la confirmación no vale.
+    pub pending_uninstall: Option<usize>,
 }
 
 impl Default for MenuState {
@@ -81,6 +88,7 @@ impl Default for MenuState {
             selected_index: 0,
             mode: MenuMode::Browsing,
             external_plugins: Vec::new(),
+            pending_uninstall: None,
         }
     }
 }
@@ -96,11 +104,13 @@ impl MenuState {
         self.open = true;
         self.selected_index = 0;
         self.mode = MenuMode::Browsing;
+        self.pending_uninstall = None;
     }
 
     /// Cierra el menú.
     pub fn close_menu(&mut self) {
         self.open = false;
+        self.pending_uninstall = None;
     }
 
     /// Número total de elementos interactivos en la lista en modo Browsing.
@@ -203,6 +213,11 @@ impl MenuState {
 
     /// Gestiona la pulsación de Escape según el estado activo del menú.
     pub fn handle_escape(&mut self) {
+        // Desarmar una desinstalación consume el primer Escape en la lista:
+        // cancelarla no debe cerrar el menú entero.
+        if matches!(self.mode, MenuMode::Browsing) && self.pending_uninstall.take().is_some() {
+            return;
+        }
         match &self.mode {
             MenuMode::Browsing => {
                 self.open = false;
@@ -241,18 +256,31 @@ impl MenuState {
             MenuMode::Browsing => {
                 match key.key.as_str() {
                     "Escape" => {
+                        // Un Escape armado solo cancela la confirmación; cerrar
+                        // el menú requiere un segundo Escape.
+                        let armado = self.pending_uninstall.is_some();
                         self.handle_escape();
-                        MenuAction::Close
+                        if armado {
+                            MenuAction::Refresh
+                        } else {
+                            MenuAction::Close
+                        }
                     }
                     "Up" | "k" if !key.ctrl && !key.alt => {
+                        // Moverse de fila desarma: la confirmación pertenece a la
+                        // fila armada, no a la posición donde quedó el foco.
+                        self.pending_uninstall = None;
                         self.navigate_up();
                         MenuAction::Refresh
                     }
                     "Down" | "j" if !key.ctrl && !key.alt => {
+                        self.pending_uninstall = None;
                         self.navigate_down(total_items);
                         MenuAction::Refresh
                     }
                     "Enter" | "Return" | " " => {
+                        // Cualquier acción distinta de `x` desarma la confirmación.
+                        self.pending_uninstall = None;
                         let idx = self.selected_index;
                         if idx < compiled_count {
                             MenuAction::ToggleCompiled(idx)
@@ -265,7 +293,30 @@ impl MenuState {
                             MenuAction::Refresh
                         }
                     }
+                    "x" | "X" if !key.ctrl && !key.alt => {
+                        let idx = self.selected_index;
+                        if idx >= compiled_count
+                            && idx < compiled_count + self.external_plugins.len()
+                        {
+                            let ext_idx = idx - compiled_count;
+                            // El primer `x` arma; el segundo, sobre la misma fila,
+                            // confirma. Se comprueba el índice: armar una fila y
+                            // confirmar otra no vale.
+                            if self.pending_uninstall == Some(ext_idx) {
+                                self.pending_uninstall = None;
+                                MenuAction::UninstallExternal(ext_idx)
+                            } else {
+                                self.pending_uninstall = Some(ext_idx);
+                                MenuAction::Refresh
+                            }
+                        } else {
+                            // Los plugins compilados (ej. herdr) y la acción de
+                            // instalar no son desinstalables.
+                            MenuAction::None
+                        }
+                    }
                     "a" | "A" | "+" if !key.ctrl && !key.alt => {
+                        self.pending_uninstall = None;
                         self.start_adding();
                         MenuAction::Refresh
                     }
@@ -451,6 +502,7 @@ fn render_browsing(
             p.health,
             false,
             is_selected,
+            false,
         ));
     }
 
@@ -458,6 +510,7 @@ fn render_browsing(
     for (i, p) in state.external_plugins.iter().enumerate() {
         let global_idx = compiled_count + i;
         let is_selected = global_idx == state.selected_index;
+        let confirm_uninstall = state.pending_uninstall == Some(i);
         list = list.child(render_plugin_row(
             p.name.clone(),
             p.id.clone(),
@@ -466,6 +519,7 @@ fn render_browsing(
             PluginHealth::Ok,
             true,
             is_selected,
+            confirm_uninstall,
         ));
     }
 
@@ -539,6 +593,10 @@ fn render_browsing(
 }
 
 /// Renderiza una fila individual para un plugin (compilado o externo).
+///
+/// `confirm_uninstall` marca la fila cuya desinstalación está armada: el texto
+/// de la derecha pasa a pedir confirmación en lugar de mostrar la versión.
+#[allow(clippy::too_many_arguments)]
 fn render_plugin_row(
     name: String,
     id: String,
@@ -547,6 +605,7 @@ fn render_plugin_row(
     health: PluginHealth,
     is_external: bool,
     is_selected: bool,
+    confirm_uninstall: bool,
 ) -> impl IntoElement {
     let (status_text, dot_color, badge_bg, badge_border) = match health {
         PluginHealth::Disabled => (
@@ -565,15 +624,13 @@ fn render_plugin_row(
         }
     };
 
-    let row_bg = if is_selected {
-        rgb(0x21262d)
+    let (row_bg, row_border) = if confirm_uninstall {
+        // La confirmación se pinta como alarma, no como foco.
+        (rgb(0x2d1315), rgb(0xf85149))
+    } else if is_selected {
+        (rgb(0x21262d), rgb(0x58a6ff))
     } else {
-        rgb(0x161b22)
-    };
-    let row_border = if is_selected {
-        rgb(0x58a6ff)
-    } else {
-        rgb(0x30363d)
+        (rgb(0x161b22), rgb(0x30363d))
     };
 
     let mut left_col = div()
@@ -644,7 +701,18 @@ fn render_plugin_row(
         .border_1()
         .border_color(row_border)
         .child(left_col)
-        .child(
+        .child(if confirm_uninstall {
+            div()
+                .px(px(6.0))
+                .py(px(2.0))
+                .rounded(px(4.0))
+                .bg(rgb(0x270e0e))
+                .text_size(px(11.0))
+                .font_weight(FontWeight::BOLD)
+                .text_color(rgb(0xf85149))
+                .child("Uninstall? X=yes  Esc=no")
+                .into_any_element()
+        } else {
             div()
                 .px(px(6.0))
                 .py(px(2.0))
@@ -652,8 +720,9 @@ fn render_plugin_row(
                 .bg(rgb(0x21262d))
                 .text_size(px(11.0))
                 .text_color(rgb(0x8b949e))
-                .child(format!("v{version}")),
-        )
+                .child(format!("v{version}"))
+                .into_any_element()
+        })
 }
 
 /// Renderiza la pantalla de captura de URL (`Adding`).
@@ -770,6 +839,7 @@ fn render_installing(
             p.health,
             false,
             is_selected,
+            false,
         ));
     }
 
@@ -784,6 +854,7 @@ fn render_installing(
             PluginHealth::Ok,
             true,
             is_selected,
+            false,
         ));
     }
 
@@ -905,4 +976,148 @@ fn render_header(badge: &'static str, title: &str, subtitle: &'static str) -> im
                 .text_color(rgb(0x8b949e))
                 .child(subtitle),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Un compilado de relleno (índice 0, no desinstalable), dos externos
+    /// (índices 1 y 2) y la acción fija de instalar (índice 3).
+    fn estado_con_dos_externos() -> MenuState {
+        MenuState {
+            open: true,
+            external_plugins: vec![
+                ExternalPluginInfo {
+                    id: "uno".to_string(),
+                    name: "Uno".to_string(),
+                    version: "0.1.0".to_string(),
+                    enabled: true,
+                    running: true,
+                },
+                ExternalPluginInfo {
+                    id: "dos".to_string(),
+                    name: "Dos".to_string(),
+                    version: "0.2.0".to_string(),
+                    enabled: false,
+                    running: false,
+                },
+            ],
+            ..Default::default()
+        }
+    }
+
+    /// Número de plugins compilados en las pruebas.
+    const COMPILADOS: usize = 1;
+
+    #[test]
+    fn x_arma_la_confirmacion_sin_desinstalar() {
+        let mut state = estado_con_dos_externos();
+        let total = state.total_items_count(COMPILADOS);
+        state.selected_index = COMPILADOS; // primer externo
+
+        let action = state.handle_key(&Key::new("x"), total, COMPILADOS);
+        assert_eq!(action, MenuAction::Refresh, "el primer x solo arma");
+        assert_eq!(state.pending_uninstall, Some(0));
+        assert_eq!(
+            state.external_plugins.len(),
+            2,
+            "armar no debe quitar la fila de la lista"
+        );
+    }
+
+    #[test]
+    fn el_segundo_x_confirma_la_desinstalacion() {
+        let mut state = estado_con_dos_externos();
+        let total = state.total_items_count(COMPILADOS);
+        state.selected_index = COMPILADOS + 1; // segundo externo
+
+        assert_eq!(
+            state.handle_key(&Key::new("x"), total, COMPILADOS),
+            MenuAction::Refresh
+        );
+        // La segunda pulsación en la misma fila ya confirma; `X` mayúscula
+        // también vale.
+        assert_eq!(
+            state.handle_key(&Key::new("X"), total, COMPILADOS),
+            MenuAction::UninstallExternal(1)
+        );
+        assert_eq!(state.pending_uninstall, None, "tras confirmar se desarma");
+    }
+
+    #[test]
+    fn x_en_otra_fila_no_confirma_la_anterior() {
+        let mut state = estado_con_dos_externos();
+        let total = state.total_items_count(COMPILADOS);
+        state.selected_index = COMPILADOS; // arma el externo 0
+        assert_eq!(
+            state.handle_key(&Key::new("x"), total, COMPILADOS),
+            MenuAction::Refresh
+        );
+
+        // Sin cancelar por flecha: el foco se mueve directamente a otra fila.
+        state.selected_index = COMPILADOS + 1;
+        let action = state.handle_key(&Key::new("x"), total, COMPILADOS);
+        assert_ne!(
+            action,
+            MenuAction::UninstallExternal(0),
+            "no se puede confirmar una fila distinta de la armada"
+        );
+        assert_eq!(state.pending_uninstall, Some(1), "arma la fila nueva");
+    }
+
+    #[test]
+    fn las_flechas_cancelan_la_confirmacion() {
+        let mut state = estado_con_dos_externos();
+        let total = state.total_items_count(COMPILADOS);
+        state.selected_index = COMPILADOS;
+        assert_eq!(
+            state.handle_key(&Key::new("x"), total, COMPILADOS),
+            MenuAction::Refresh
+        );
+
+        assert_eq!(
+            state.handle_key(&Key::new("Down"), total, COMPILADOS),
+            MenuAction::Refresh
+        );
+        assert_eq!(state.pending_uninstall, None, "moverse desarma");
+    }
+
+    #[test]
+    fn escape_cancela_la_confirmacion_sin_cerrar_el_menu() {
+        let mut state = estado_con_dos_externos();
+        let total = state.total_items_count(COMPILADOS);
+        state.selected_index = COMPILADOS;
+        assert_eq!(
+            state.handle_key(&Key::new("x"), total, COMPILADOS),
+            MenuAction::Refresh
+        );
+
+        let action = state.handle_key(&Key::new("Escape"), total, COMPILADOS);
+        assert_ne!(action, MenuAction::Close, "cancela sin cerrar el menú");
+        assert!(state.open, "el menú sigue abierto");
+        assert_eq!(state.pending_uninstall, None);
+    }
+
+    #[test]
+    fn x_en_una_fila_compilada_no_hace_nada() {
+        let mut state = estado_con_dos_externos();
+        let total = state.total_items_count(COMPILADOS);
+        state.selected_index = 0; // compilado (ej. herdr)
+
+        let action = state.handle_key(&Key::new("x"), total, COMPILADOS);
+        assert_eq!(action, MenuAction::None);
+        assert_eq!(state.pending_uninstall, None, "no se arma sobre compilados");
+    }
+
+    #[test]
+    fn x_sobre_la_accion_de_instalar_no_hace_nada() {
+        let mut state = estado_con_dos_externos();
+        let total = state.total_items_count(COMPILADOS);
+        state.selected_index = total - 1; // "+ Install plugin"
+
+        let action = state.handle_key(&Key::new("x"), total, COMPILADOS);
+        assert_eq!(action, MenuAction::None);
+        assert_eq!(state.pending_uninstall, None);
+    }
 }

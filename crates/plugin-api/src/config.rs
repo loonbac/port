@@ -283,6 +283,26 @@ impl ConfigFile {
         block.set("enabled", enabled);
         Self::save_plugin(path, plugin_id, &block)
     }
+
+    /// Elimina una clave del bloque del plugin conservando el resto.
+    ///
+    /// Se usa al desinstalar: un `enabled` colgando reactivaría el plugin si
+    /// volviera a instalarse, pero tampoco se deben perder los demás ajustes
+    /// (opacidad, familia...). Si el archivo, el bloque o la clave no existen,
+    /// no hace nada.
+    pub fn unset(path: &Path, plugin_id: &str, key: &str) -> std::io::Result<()> {
+        let content = if path.exists() {
+            std::fs::read_to_string(path)?
+        } else {
+            return Ok(());
+        };
+        let mut configs = Self::parse(&content);
+        let Some(mut block) = configs.remove(plugin_id) else {
+            return Ok(());
+        };
+        let _ = block.values.remove(key);
+        Self::save_plugin(path, plugin_id, &block)
+    }
 }
 
 #[cfg(test)]
@@ -393,6 +413,50 @@ default_size = 14
         ConfigFile::set_enabled(&path, "font", true).unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(ConfigFile::is_enabled(&ConfigFile::parse(&content), "font"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn borrar_enabled_deja_la_configuracion_valida() {
+        let dir = std::env::temp_dir().join(format!("port-config-unset-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.md");
+        std::fs::write(
+            &path,
+            "```font\nenabled = false\nfamily = JetBrainsMono\n```\n",
+        )
+        .unwrap();
+
+        ConfigFile::unset(&path, "font", "enabled").unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !content.contains("enabled"),
+            "la clave debe desaparecer: {content}"
+        );
+        assert!(
+            content.contains("family = JetBrainsMono"),
+            "el resto del bloque se conserva: {content}"
+        );
+        // El archivo sigue siendo un bloque válido y el plugin vuelve al
+        // default habilitado.
+        let parsed = ConfigFile::parse(&content);
+        assert!(parsed.contains_key("font"));
+        assert!(
+            ConfigFile::is_enabled(&parsed, "font"),
+            "sin `enabled` el plugin queda habilitado por defecto"
+        );
+
+        // Un id sin bloque no debe crear uno vacío al intentar borrar.
+        ConfigFile::unset(&path, "no-existe", "enabled").unwrap();
+        assert!(
+            !std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("no-existe"),
+            "borrar en un id ausente no inventa un bloque"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

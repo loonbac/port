@@ -290,15 +290,13 @@ fn run_terminal() {
                                     p_info.enabled = false;
                                     let id = p_info.id.clone();
                                     eprintln!("[tienda] plugin {id} desactivado desde el menu");
-                                    external_plugins_for_keys
-                                        .borrow_mut()
-                                        .retain(|p| p.manifest().id != id);
                                     // La apariencia se compone en el registro:
                                     // reflejar la lista nueva hace que el
                                     // externo apagado deje de aportar ya.
-                                    refresh_externals(
+                                    stop_external(
                                         &plugins_for_keys,
                                         &external_plugins_for_keys,
+                                        &id,
                                     );
                                     // Persistir el apagado: sin esto, el próximo
                                     // arranque de PORT lo reactivaría.
@@ -447,6 +445,94 @@ fn run_terminal() {
                                     .ok();
                             })
                             .detach();
+                        }
+                        MenuAction::UninstallExternal(idx) => {
+                            // El id se obtiene antes de tocar nada: desinstalar
+                            // borra archivos y no debe correr con préstamos
+                            // vivos sobre el estado del menú.
+                            let target = menu_state_for_keys
+                                .borrow()
+                                .external_plugins
+                                .get(idx)
+                                .map(|p| (p.id.clone(), p.running));
+                            match target {
+                                None => {
+                                    eprintln!(
+                                        "no se pudo desinstalar: no hay plugin externo en {idx}"
+                                    );
+                                }
+                                Some((id, was_running)) => {
+                                    // Un plugin vivo debe estar del todo detenido
+                                    // antes de borrar sus archivos: soltar su
+                                    // `Arc` ejecuta el `Drop` que mata el proceso.
+                                    if was_running {
+                                        if let Some(p) = menu_state_for_keys
+                                            .borrow_mut()
+                                            .external_plugins
+                                            .get_mut(idx)
+                                        {
+                                            p.running = false;
+                                        }
+                                        stop_external(
+                                            &plugins_for_keys,
+                                            &external_plugins_for_keys,
+                                            &id,
+                                        );
+                                    }
+                                    match port_plugin_api::host::uninstall(&id) {
+                                        Ok(true) => {
+                                            // El plugin ya no existe: un `enabled`
+                                            // colgando lo reactivaría si volviera a
+                                            // instalarse. Se borra la clave, y si
+                                            // no se puede, se deja en falso.
+                                            if let Err(e) = port_plugin_api::ConfigFile::unset(
+                                                &config_path_for_keys,
+                                                &id,
+                                                "enabled",
+                                            ) {
+                                                eprintln!(
+                                                    "no se pudo borrar enabled de {id}: {e}"
+                                                );
+                                                if let Err(e2) =
+                                                    port_plugin_api::ConfigFile::set_enabled(
+                                                        &config_path_for_keys,
+                                                        &id,
+                                                        false,
+                                                    )
+                                                {
+                                                    eprintln!(
+                                                        "no se pudo guardar enabled=false para {id}: {e2}"
+                                                    );
+                                                }
+                                            }
+                                            {
+                                                let mut s = menu_state_for_keys.borrow_mut();
+                                                if idx < s.external_plugins.len() {
+                                                    s.external_plugins.remove(idx);
+                                                }
+                                                s.pending_uninstall = None;
+                                                let total = s.total_items_count(
+                                                    plugins_for_keys.borrow().len(),
+                                                );
+                                                s.clamp_selection(total);
+                                            }
+                                            eprintln!("[tienda] plugin {id} desinstalado");
+                                        }
+                                        Ok(false) => {
+                                            eprintln!(
+                                                "no se pudo desinstalar plugin {id}: no está instalado"
+                                            );
+                                            menu_state_for_keys.borrow_mut().pending_uninstall = None;
+                                        }
+                                        Err(e) => {
+                                            eprintln!(
+                                                "no se pudo desinstalar plugin {id}: {e}"
+                                            );
+                                            menu_state_for_keys.borrow_mut().pending_uninstall = None;
+                                        }
+                                    }
+                                }
+                            }
                         }
                         MenuAction::Refresh | MenuAction::None => {}
                     }
@@ -623,6 +709,29 @@ fn refresh_externals(
     plugins
         .borrow_mut()
         .set_externals(externals.borrow().clone());
+}
+
+/// Detiene un plugin externo vivo y lo saca de la lista de procesos.
+///
+/// Soltar la última referencia `Arc` ejecuta el `Drop` de `ExternalPlugin`, que
+/// manda `Shutdown` y espera al hijo: al volver, el proceso ya no existe. Se
+/// refresca el registro para que su apariencia deje de contar de inmediato.
+/// Devuelve `true` si había un proceso registrado con ese id.
+fn stop_external(
+    plugins: &Rc<RefCell<PluginRegistry>>,
+    externals: &Rc<RefCell<Vec<Arc<port_plugin_api::host::ExternalPlugin>>>>,
+    id: &str,
+) -> bool {
+    let removed = {
+        let mut list = externals.borrow_mut();
+        let before = list.len();
+        list.retain(|p| p.manifest().id != id);
+        before != list.len()
+    };
+    if removed {
+        refresh_externals(plugins, externals);
+    }
+    removed
 }
 
 /// Lee los bloques del archivo de configuración, o un mapa vacío si aún no existe.
