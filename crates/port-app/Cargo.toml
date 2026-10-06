@@ -16,3 +16,6 @@ port-plugin-api = { path = "../plugin-api" }
 # herdr draws with GPUI, so it is compiled into PORT itself (see the root
 # Cargo.toml for the git dependency and the port.git patch).
 port-plugin-herdr = { workspace = true }
+# La politica de raton y seleccion tambien es in-process: la UI la lee en cada
+# gesto sin cruzar el protocolo de los plugins de tienda.
+port-plugin-selection = { workspace = true }

@@ -3863,6 +3863,7 @@ dependencies = [
  "gpui",
  "port-plugin-api",
  "port-plugin-herdr",
+ "port-plugin-selection",
  "port-term-core",
 ]
 
@@ -3881,7 +3882,7 @@ dependencies = [
 [[package]]
 name = "port-plugin-herdr"
 version = "0.1.0"
-source = "git+https://github.com/loonbac/port-plugins.git?branch=master#34c9113c1a45acccacd75157311f69cb75d6fc09"
+source = "git+https://github.com/loonbac/port-plugins.git?branch=master#45b791f1e7f268395b01f0f3ae5779d914a10cc0"
 dependencies = [
  "gpui",
  "port-plugin-api",
@@ -3895,6 +3896,15 @@ version = "0.1.2"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "port-plugin-selection"
+version = "0.1.0"
+source = "git+https://github.com/loonbac/port-plugins.git?branch=master#45b791f1e7f268395b01f0f3ae5779d914a10cc0"
+dependencies = [
+ "port-plugin-api",
+ "port-term-core",
 ]
 
 [[package]]
