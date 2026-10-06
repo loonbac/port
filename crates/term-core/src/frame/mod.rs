@@ -94,10 +94,20 @@ pub struct Cursor {
     pub visible: bool,
 }
 
+/// Rango inclusivo de columnas seleccionadas dentro de una fila.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SelectionSpan {
+    pub start: usize,
+    pub end: usize,
+}
+
 /// Una fila visible, ya agrupada en runs.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row {
     pub runs: Vec<Run>,
+    /// Columnas seleccionadas de la fila, en coordenadas del viewport; `None` si
+    /// la fila no tiene ninguna celda seleccionada.
+    pub selection: Option<SelectionSpan>,
 }
 
 impl Row {

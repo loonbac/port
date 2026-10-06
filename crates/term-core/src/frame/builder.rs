@@ -15,7 +15,7 @@ use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{Term, TermMode};
 use alacritty_terminal::vte::ansi::{Color, CursorShape as VteCursorShape, NamedColor};
 
-use super::{Cursor, CursorRun, CursorShape, Frame, Rgb, Row, Run, Style};
+use super::{Cursor, CursorRun, CursorShape, Frame, Rgb, Row, Run, SelectionSpan, Style};
 
 /// Paleta de los 16 colores base, mientras no exista configuración ni tema.
 const PALETTE: [(NamedColor, Rgb); 16] = [
@@ -145,11 +145,17 @@ pub fn build<T: EventListener>(term: &Term<T>) -> Frame {
     let cursor_shape = content.cursor.shape;
     let cursor_point = content.cursor.point;
     let show_cursor = content.mode.contains(TermMode::SHOW_CURSOR);
+    // El rango de selección ya viene resuelto por alacritty (`Selection::to_range`),
+    // en coordenadas absolutas del buffer. Se copia antes de consumir el iterador
+    // de celdas porque `SelectionRange` es `Copy` y `display_iter` se mueve.
+    let selection_range = content.selection;
 
     let mut rows: Vec<Row> = Vec::with_capacity(rows_count);
     let mut current: Vec<Run> = Vec::new();
     let mut current_row: Option<i32> = None;
     let mut last_column = 0usize;
+    // Columnas mínima y máxima seleccionadas de la fila que se está armando.
+    let mut current_span: Option<(usize, usize)> = None;
     // Fila y columna del cursor, necesarias durante la iteración porque la celda
     // se separa en su propio run mientras se construye la fila.
     let cursor_position = if show_cursor {
@@ -172,11 +178,28 @@ pub fn build<T: EventListener>(term: &Term<T>) -> Frame {
             if current_row.is_some() {
                 rows.push(Row {
                     runs: std::mem::take(&mut current),
+                    selection: current_span.map(|(start, end)| SelectionSpan { start, end }),
                 });
             }
             current_row = Some(row_index);
             last_column = 0;
             sealed_run = false;
+            current_span = None;
+        }
+
+        // La selección se comprueba antes de descartar los huecos de carácter
+        // ancho: `contains_cell` marca la celda ancha cuando su hueco queda
+        // dentro del rango. Se pasa `Hidden` para que `contains_cell` no excluya
+        // la celda del cursor en bloque: el span describe la geometría de la
+        // selección y la UI pinta el cursor por su cuenta.
+        if let Some(range) = &selection_range {
+            if range.contains_cell(&indexed, indexed.point, VteCursorShape::Hidden) {
+                let column = indexed.point.column.0;
+                current_span = Some(match current_span {
+                    Some((start, end)) => (start.min(column), end.max(column)),
+                    None => (column, column),
+                });
+            }
         }
 
         // El segundo hueco de un carácter ancho no se pinta: ya lo ocupa el
@@ -252,7 +275,10 @@ pub fn build<T: EventListener>(term: &Term<T>) -> Frame {
         last_column = indexed.point.column.0 + cell_columns;
     }
     if current_row.is_some() {
-        rows.push(Row { runs: current });
+        rows.push(Row {
+            runs: current,
+            selection: current_span.map(|(start, end)| SelectionSpan { start, end }),
+        });
     }
 
     for (index, row) in rows.iter_mut().enumerate() {
@@ -263,7 +289,10 @@ pub fn build<T: EventListener>(term: &Term<T>) -> Frame {
     }
 
     while rows.len() < rows_count {
-        rows.push(Row { runs: Vec::new() });
+        rows.push(Row {
+            runs: Vec::new(),
+            selection: None,
+        });
     }
     rows.truncate(rows_count);
 

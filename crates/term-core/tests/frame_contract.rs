@@ -5,9 +5,11 @@
 
 use alacritty_terminal::event::VoidListener;
 use alacritty_terminal::grid::Dimensions;
+use alacritty_terminal::index::{Column, Line, Point, Side};
+use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::{Config, Term};
 use alacritty_terminal::vte::ansi::Processor;
-use port_term_core::frame::{build, CursorShape, Rgb, Style};
+use port_term_core::frame::{build, CursorShape, Rgb, SelectionSpan, Style};
 
 struct Size(usize, usize);
 
@@ -43,6 +45,14 @@ fn make_term(columns: usize, rows: usize) -> Term<VoidListener> {
 fn feed(term: &mut Term<VoidListener>, bytes: &[u8]) {
     let mut processor: Processor<alacritty_terminal::vte::ansi::StdSyncHandler> = Processor::new();
     processor.advance(term, bytes);
+}
+
+/// Marca en `term` una selección simple entre dos puntos absolutos del buffer.
+fn select(term: &mut Term<VoidListener>, start: Point, end: Point) {
+    term.selection = Some(Selection::new(SelectionType::Simple, start, Side::Left));
+    if let Some(selection) = term.selection.as_mut() {
+        selection.update(end, Side::Right);
+    }
 }
 
 #[test]
@@ -261,4 +271,89 @@ fn scrolled_viewport_reports_its_offset() {
     let frame = build(&term);
     assert_eq!(frame.display_offset, 0);
     assert_eq!(frame.rows.len(), 2);
+}
+
+/// Una selección dentro de una sola fila expone su rango inclusivo de columnas,
+/// y las filas sin celdas seleccionadas no llevan span.
+#[test]
+fn la_seleccion_marca_el_rango_de_columnas_de_su_fila() {
+    let mut term = make_term(10, 3);
+    feed(&mut term, b"abcdef\r\nghijkl\r\nmnopqr");
+    select(
+        &mut term,
+        Point::new(Line(0), Column(1)),
+        Point::new(Line(0), Column(3)),
+    );
+
+    let frame = build(&term);
+    assert_eq!(
+        frame.rows[0].selection,
+        Some(SelectionSpan { start: 1, end: 3 })
+    );
+    assert_eq!(
+        frame.rows[1].selection, None,
+        "una fila sin selección no debe llevar span"
+    );
+    assert_eq!(frame.rows[2].selection, None);
+}
+
+/// Una selección que cruza filas cubre desde el ancla hasta el final en la
+/// primera fila, entera en las intermedias y hasta el extremo en la última.
+#[test]
+fn la_seleccion_cubre_primera_media_y_ultima_fila() {
+    let mut term = make_term(10, 3);
+    feed(&mut term, b"abcdef\r\nghijkl\r\nmnopqr");
+    select(
+        &mut term,
+        Point::new(Line(0), Column(2)),
+        Point::new(Line(2), Column(4)),
+    );
+
+    let frame = build(&term);
+    assert_eq!(
+        frame.rows[0].selection,
+        Some(SelectionSpan { start: 2, end: 9 })
+    );
+    assert_eq!(
+        frame.rows[1].selection,
+        Some(SelectionSpan { start: 0, end: 9 })
+    );
+    assert_eq!(
+        frame.rows[2].selection,
+        Some(SelectionSpan { start: 0, end: 4 })
+    );
+}
+
+/// El span sigue al contenido: al desplazar el viewport, la misma selección
+/// absoluta aparece en otra fila del cuadro.
+#[test]
+fn el_span_sigue_a_la_seleccion_al_desplazar_el_viewport() {
+    let mut term = make_term(10, 3);
+    for index in 0..6 {
+        feed(&mut term, format!("linea{index}\r\n").as_bytes());
+    }
+    select(
+        &mut term,
+        Point::new(Line(0), Column(2)),
+        Point::new(Line(0), Column(4)),
+    );
+
+    let frame = build(&term);
+    assert_eq!(frame.display_offset, 0);
+    assert_eq!(
+        frame.rows[0].selection,
+        Some(SelectionSpan { start: 2, end: 4 })
+    );
+
+    term.scroll_display(alacritty_terminal::grid::Scroll::Delta(1));
+    let frame = build(&term);
+    assert_eq!(frame.display_offset, 1);
+    assert_eq!(
+        frame.rows[0].selection, None,
+        "la fila 0 ya no contiene la línea seleccionada"
+    );
+    assert_eq!(
+        frame.rows[1].selection,
+        Some(SelectionSpan { start: 2, end: 4 })
+    );
 }
