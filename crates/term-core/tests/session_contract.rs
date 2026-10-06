@@ -5,9 +5,10 @@
 
 use std::time::{Duration, Instant};
 
+use port_term_core::frame::Rgb;
 use port_term_core::input::KeyMode;
 use port_term_core::pty::PtyConfig;
-use port_term_core::session::{CellPos, GridSize, Session, SessionManager};
+use port_term_core::session::{CellPos, GridSize, MousePolicy, Session, SessionManager};
 
 /// Arranca un shell no interactivo predecible en vez del del usuario.
 fn plain_shell() -> PtyConfig {
@@ -955,4 +956,22 @@ fn el_pegado_sin_modo_de_corchetes_envia_el_texto_crudo() {
         !text.contains("^[[200~"),
         "sin el modo activo no debe haber marcadores de corchetes:\n{text}"
     );
+}
+
+/// `spawn` arranca con la política por defecto y `set_mouse_policy` conserva lo
+/// asignado: el núcleo solo guarda y devuelve la política, la UI la lee.
+#[test]
+fn la_politica_de_raton_se_guarda_y_se_devuelve() {
+    let mut session = Session::spawn(plain_shell(), GridSize::new(40, 8)).expect("sesión");
+    assert_eq!(session.mouse_policy(), MousePolicy::default());
+
+    let policy = MousePolicy {
+        forward_clicks: false,
+        copy_on_select: false,
+        highlight: Rgb::new(1, 2, 3),
+        highlight_opacity: 0.1,
+        ..MousePolicy::default()
+    };
+    session.set_mouse_policy(policy);
+    assert_eq!(session.mouse_policy(), policy);
 }

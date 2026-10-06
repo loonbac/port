@@ -21,6 +21,7 @@ use gpui::AnyElement;
 use port_term_core::frame::Rgb;
 use port_term_core::input::Key;
 use port_term_core::pty::{PtyConfig, RunningApp};
+use port_term_core::session::MousePolicy;
 
 use crate::host::ExternalPlugin;
 
@@ -197,6 +198,14 @@ pub trait InputHook {
     }
 }
 
+/// Capacidades de ratón y selección.
+pub trait MouseHook {
+    /// Política vigente. El valor por defecto es el comportamiento de PORT.
+    fn mouse_policy(&self) -> MousePolicy {
+        MousePolicy::default()
+    }
+}
+
 /// Capacidades de inserción de cromo en el layout de la ventana (tabs, sidebar, status).
 pub trait LayoutHook {
     /// Elemento que se inserta en la parte superior (ej. barra de pestañas).
@@ -335,6 +344,11 @@ pub trait Plugin: 'static {
 
     /// Hook de entrada, si el plugin lo implementa.
     fn input_hook(&self) -> Option<&dyn InputHook> {
+        None
+    }
+
+    /// Hook de ratón y selección, si el plugin lo implementa.
+    fn mouse_hook(&self) -> Option<&dyn MouseHook> {
         None
     }
 
@@ -742,6 +756,34 @@ impl PluginRegistry {
             }
         }
         KeyAction::Pass
+    }
+
+    /// Política de ratón y selección vigente, compuesta con los plugins activos.
+    ///
+    /// Regla: el **primer** plugin registrado que implemente el
+    /// [`MouseHook`] es el dueño de la política; es la misma precedencia
+    /// «gana el primero» que la familia de fuente. Un plugin deshabilitado o
+    /// con el watchdog disparado no aporta —`invoke_hook` ya devuelve el valor
+    /// de respaldo cuando corresponde— así que cede ante el siguiente, y si
+    /// ninguno la aporta rige [`MousePolicy::default()`]. Leer la política pasa
+    /// por el mismo aislamiento de pánicos y el mismo presupuesto de hook que
+    /// el resto de hooks.
+    pub fn mouse_policy(&self) -> MousePolicy {
+        for entry in &self.plugins {
+            if !entry.enabled || entry.health.get() == PluginHealth::Disabled {
+                continue;
+            }
+            if entry.plugin.mouse_hook().is_some() {
+                return entry.invoke_hook(self.hook_budget, MousePolicy::default(), || {
+                    entry
+                        .plugin
+                        .mouse_hook()
+                        .map(|hook| hook.mouse_policy())
+                        .unwrap_or_default()
+                });
+            }
+        }
+        MousePolicy::default()
     }
 
     /// Altura acumulada de las barras superiores activas.

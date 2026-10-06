@@ -6,12 +6,13 @@ use std::time::Duration;
 use gpui::{div, Element};
 use port_plugin_api::host::ExternalPlugin;
 use port_plugin_api::{
-    AppearanceHook, CloseDecision, InputHook, KeyAction, LayoutHook, LifecycleHook, Plugin,
-    PluginConfig, PluginHealth, PluginRegistry, SpaceHook, DEFAULT_HOOK_BUDGET,
+    AppearanceHook, CloseDecision, InputHook, KeyAction, LayoutHook, LifecycleHook, MouseHook,
+    Plugin, PluginConfig, PluginHealth, PluginRegistry, SpaceHook, DEFAULT_HOOK_BUDGET,
 };
 use port_term_core::frame::Rgb;
 use port_term_core::input::Key;
 use port_term_core::pty::PtyConfig;
+use port_term_core::session::MousePolicy;
 
 struct MockTransparencyPlugin {
     opacity: f32,
@@ -176,6 +177,31 @@ impl Plugin for MockLayoutPlugin {
     }
 }
 
+/// Plugin de prueba que aporta una política de ratón y selección concreta.
+struct MockMousePlugin {
+    policy: MousePolicy,
+}
+
+impl MouseHook for MockMousePlugin {
+    fn mouse_policy(&self) -> MousePolicy {
+        self.policy
+    }
+}
+
+impl Plugin for MockMousePlugin {
+    fn id(&self) -> &'static str {
+        "mouse"
+    }
+
+    fn name(&self) -> &'static str {
+        "Mock Mouse"
+    }
+
+    fn mouse_hook(&self) -> Option<&dyn MouseHook> {
+        Some(self)
+    }
+}
+
 /// Plugin de prueba con una petición de sesión que ejecuta un programa propio.
 ///
 /// Guarda la petición pendiente en una celda para comprobar que el consumo la
@@ -279,6 +305,78 @@ fn empty_registry_has_default_values() {
     assert_eq!(registry.dispatch_key(&Key::new("a")), KeyAction::Pass);
     assert_eq!(registry.top_bars().len(), 0);
     assert_eq!(registry.left_sidebars().len(), 0);
+    assert_eq!(registry.mouse_policy(), MousePolicy::default());
+}
+
+/// Sin ningún plugin que implemente el hook de ratón, rige la política de PORT.
+#[test]
+fn sin_plugin_de_raton_la_politica_es_la_de_port() {
+    let mut registry = PluginRegistry::new();
+    registry.register(MockTransparencyPlugin { opacity: 0.9 });
+    assert_eq!(registry.mouse_policy(), MousePolicy::default());
+}
+
+/// Un plugin que implementa el hook es el dueño de la política vigente.
+#[test]
+fn un_plugin_de_raton_aporta_su_politica() {
+    let policy = MousePolicy {
+        forward_clicks: false,
+        highlight: Rgb::new(1, 2, 3),
+        ..MousePolicy::default()
+    };
+    let mut registry = PluginRegistry::new();
+    registry.register(MockMousePlugin { policy });
+    assert_eq!(registry.mouse_policy(), policy);
+}
+
+/// Un plugin de ratón deshabilitado no aporta: vuelve la política de PORT.
+#[test]
+fn un_plugin_de_raton_deshabilitado_no_aporta() {
+    let policy = MousePolicy {
+        forward_clicks: false,
+        ..MousePolicy::default()
+    };
+    let mut registry = PluginRegistry::new();
+    registry.register(MockMousePlugin { policy });
+    assert!(registry.set_enabled("mouse", false));
+    assert_eq!(registry.mouse_policy(), MousePolicy::default());
+}
+
+/// Con varios plugins, gana el primero registrado que implemente el hook, de
+/// forma determinista: es la misma precedencia «gana el primero» de la fuente.
+#[test]
+fn con_dos_plugins_de_raton_gana_el_primero() {
+    let primera = MousePolicy {
+        forward_drag: false,
+        ..MousePolicy::default()
+    };
+    let segunda = MousePolicy {
+        forward_motion: false,
+        ..MousePolicy::default()
+    };
+    let mut registry = PluginRegistry::new();
+    registry.register(MockMousePlugin { policy: primera });
+    registry.register(MockMousePlugin { policy: segunda });
+    assert_eq!(registry.mouse_policy(), primera);
+}
+
+/// Un plugin de ratón deshabilitado cede ante el siguiente que sí aporte; solo
+/// si ninguno de los que implementan el hook aporta vuelve la política de PORT.
+#[test]
+fn un_plugin_de_raton_deshabilitado_cede_ante_el_siguiente() {
+    let primera = MousePolicy {
+        forward_drag: false,
+        ..MousePolicy::default()
+    };
+    let segunda = MousePolicy {
+        forward_motion: false,
+        ..MousePolicy::default()
+    };
+    let mut registry = PluginRegistry::new();
+    registry.register(MockMousePlugin { policy: primera });
+    registry.register(MockMousePlugin { policy: segunda });
+    assert!(registry.set_enabled("mouse", false));
+    assert_eq!(registry.mouse_policy(), segunda);
 }
 
 #[test]
@@ -615,6 +713,12 @@ impl LifecycleHook for PanickingPlugin {
     }
 }
 
+impl MouseHook for PanickingPlugin {
+    fn mouse_policy(&self) -> MousePolicy {
+        panic!("politica de raton fallo");
+    }
+}
+
 impl Plugin for PanickingPlugin {
     fn id(&self) -> &'static str {
         "panicking"
@@ -641,6 +745,10 @@ impl Plugin for PanickingPlugin {
     }
 
     fn lifecycle_hook(&self) -> Option<&dyn LifecycleHook> {
+        Some(self)
+    }
+
+    fn mouse_hook(&self) -> Option<&dyn MouseHook> {
         Some(self)
     }
 }
@@ -684,6 +792,7 @@ fn a_panicking_plugin_cannot_take_down_the_terminal() {
     assert_eq!(registry.left_sidebar_width(), 0.0);
     assert_eq!(registry.top_bar_height(), 0.0);
     assert_eq!(registry.dispatch_key(&Key::new("a")), KeyAction::Pass);
+    assert_eq!(registry.mouse_policy(), MousePolicy::default());
     registry.on_session_created(1);
     registry.on_session_closed(1);
     registry.take_new_session_request();
