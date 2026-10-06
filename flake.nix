@@ -100,8 +100,8 @@
                 # in-process de port-plugins). El vendor es el checkout completo
                 # del repositorio, asi que ambos comparten el hash de la misma
                 # revision: master en Cargo.lock.
-                "port-plugin-herdr-0.1.0" = "sha256-EuuQ0ZxDzLPH57Hd5IiW9f8nkOeoemL3YTq8S0csGXo=";
-                "port-plugin-selection-0.1.0" = "sha256-EuuQ0ZxDzLPH57Hd5IiW9f8nkOeoemL3YTq8S0csGXo=";
+                "port-plugin-herdr-0.1.0" = "sha256-jDDwxVlWVUAoP5PsxnCdgujVUT0D3uyXd88OGnsKw8Q=";
+                "port-plugin-selection-0.1.0" = "sha256-jDDwxVlWVUAoP5PsxnCdgujVUT0D3uyXd88OGnsKw8Q=";
               };
             };
 
