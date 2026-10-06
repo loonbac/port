@@ -69,6 +69,12 @@ sin que el núcleo sepa que existe.
 Ratón: arrastrar selecciona, doble clic selecciona la palabra y triple clic la
 línea completa. Al soltar el botón la selección se copia al portapapeles.
 
+Los programas que capturan el ratón —pi, vim, less— reciben el clic, el
+arrastre y la liberación como reportes de ratón del terminal (SGR), así que su
+propio arrastre funciona: el gesto pertenece al programa. Mantén `Shift`
+mientras arrastras para devolvérselo a PORT y seleccionar texto localmente. Un
+shell normal sigue seleccionando con un arrastre normal.
+
 ## Configuración
 
 `~/.config/port/config.md` se crea automáticamente en la primera ejecución. Cada

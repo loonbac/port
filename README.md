@@ -64,6 +64,11 @@ plugin can replace core behaviour without the core knowing it exists.
 Mouse: drag to select, double-click a word, triple-click a line. Releasing the
 button copies the selection to the clipboard.
 
+Programs that capture the mouse — pi, vim, less — receive the click, the drag
+and the release as terminal mouse reports (SGR), so their own dragging works:
+the drag belongs to the program. Hold `Shift` while dragging to give it back to
+PORT and select text locally. A plain shell still selects with a plain drag.
+
 ## Configuration
 
 `~/.config/port/config.md` is created automatically on first run. Each plugin

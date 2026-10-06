@@ -17,12 +17,15 @@ use std::rc::Rc;
 use gpui::prelude::*;
 use gpui::{
     anchored, canvas, deferred, div, fill, point, px, rgb, size, App, Bounds, ClipboardItem,
-    Context, FocusHandle, Font, FontFallbacks, FontStyle, FontWeight, MouseButton, Pixels, Render,
-    ScrollDelta, ScrollWheelEvent, TextRun, Window,
+    Context, FocusHandle, Font, FontFallbacks, FontStyle, FontWeight, Modifiers, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, ScrollDelta,
+    ScrollWheelEvent, TextRun, Window,
 };
 use port_plugin_api::PluginRegistry;
 use port_term_core::frame::{Frame, Rgb, Run, Style};
-use port_term_core::session::{CellPos, SelectionKind, SessionManager};
+use port_term_core::session::{
+    CellPos, MouseButton as TerminalMouseButton, MouseModifiers, SelectionKind, SessionManager,
+};
 
 use crate::metrics::Metrics;
 
@@ -40,6 +43,11 @@ pub struct TerminalView {
     /// `window.refresh()` reconstruye los manejadores y la bandera debe seguir
     /// encendida entre un movimiento del ratón y el siguiente.
     drag_selecting: Rc<Cell<bool>>,
+    /// Botón que capturó el programa, si el gesto es suyo: `Some` significa
+    /// «el programa pidió reportes y este gesto le pertenece», y guarda además
+    /// cuál está pulsado para reportar el movimiento y la liberación. Vive aquí
+    /// por la misma razón que la bandera de arrastre.
+    program_drag: Rc<Cell<Option<TerminalMouseButton>>>,
 }
 
 impl TerminalView {
@@ -61,6 +69,7 @@ impl TerminalView {
             menu_state,
             close_prompt,
             drag_selecting: Rc::new(Cell::new(false)),
+            program_drag: Rc::new(Cell::new(None)),
         }
     }
 }
@@ -188,9 +197,92 @@ impl Render for TerminalView {
         // hay bajo el puntero cuando el programa pide reportes de ratón.
         let grid_origin: Rc<Cell<(f32, f32)>> = Rc::new(Cell::new((0.0, 0.0)));
 
-        // Clon del estado de arrastre que vive en la vista: los manejadores lo
-        // comparten y el clon apunta a la misma bandera entre repintados.
+        // Clones del estado del ratón que vive en la vista: los manejadores lo
+        // comparten y el clon apunta al mismo estado entre repintados.
         let drag_selecting = Rc::clone(&self.drag_selecting);
+        let program_drag = Rc::clone(&self.program_drag);
+        let mouse_session = Rc::clone(&self.session_manager);
+        let (cell_width, cell_height, padding) =
+            (metrics.cell_width, metrics.cell_height, metrics.padding);
+
+        // gpui filtra el botón antes de invocar al manejador, así que cada
+        // manejador nace sabiendo cuál atiende y su cuerpo no vuelve a
+        // comprobarlo. La decisión es del núcleo: si el programa capturó el
+        // gesto, es suyo; PORT solo selecciona lo que el programa no quiso.
+        let mouse_down = |button: MouseButton| {
+            let session = Rc::clone(&mouse_session);
+            let grid_origin = Rc::clone(&grid_origin);
+            let drag_selecting = Rc::clone(&drag_selecting);
+            let program_drag = Rc::clone(&program_drag);
+            move |event: &MouseDownEvent, window: &mut Window, _cx: &mut App| {
+                let cell = cell_at_pointer(
+                    &grid_origin,
+                    event.position,
+                    cell_width,
+                    cell_height,
+                    padding,
+                );
+                let Some(terminal) = terminal_button(button) else {
+                    return;
+                };
+                let consumed = session.borrow_mut().active_session_mut().mouse_press(
+                    terminal,
+                    cell,
+                    mouse_modifiers(event.modifiers),
+                );
+                if starts_local_selection(button, consumed) {
+                    // El programa no pidió este gesto: se selecciona igual que
+                    // siempre (clic, doble clic o triple clic).
+                    let kind = selection_kind_for_click_count(event.click_count);
+                    session
+                        .borrow_mut()
+                        .active_session_mut()
+                        .start_selection(cell, kind);
+                    drag_selecting.set(true);
+                    window.refresh();
+                } else if consumed {
+                    // El gesto es del programa: no se inicia selección local.
+                    program_drag.set(Some(terminal));
+                }
+            }
+        };
+
+        // Un soltar cierra el gesto que le corresponde: si el programa lo
+        // capturó, le reenvía la liberación; si era un arrastre local de
+        // PORT, lo termina y copia. Los botones medio y derecho nunca
+        // cierran una selección local.
+        let mouse_up = |button: MouseButton| {
+            let session = Rc::clone(&mouse_session);
+            let grid_origin = Rc::clone(&grid_origin);
+            let drag_selecting = Rc::clone(&drag_selecting);
+            let program_drag = Rc::clone(&program_drag);
+            move |event: &MouseUpEvent, window: &mut Window, cx: &mut App| {
+                let Some(terminal) = terminal_button(button) else {
+                    return;
+                };
+                if program_drag.get() == Some(terminal) {
+                    let cell = cell_at_pointer(
+                        &grid_origin,
+                        event.position,
+                        cell_width,
+                        cell_height,
+                        padding,
+                    );
+                    session.borrow_mut().active_session_mut().mouse_release(
+                        terminal,
+                        cell,
+                        mouse_modifiers(event.modifiers),
+                    );
+                    program_drag.set(None);
+                    return;
+                }
+                if terminal != TerminalMouseButton::Left {
+                    return;
+                }
+                finish_drag(&session, &drag_selecting, cx);
+                window.refresh();
+            }
+        };
 
         // 1. Barras laterales izquierdas (full height)
         for sidebar in left_sidebars {
@@ -245,43 +337,39 @@ impl Render for TerminalView {
                         }
                     }
                 })
-                // Selección con el ratón: un clic ancla la celda, doble clic la
-                // palabra y triple clic la línea. El arrastre extiende la
-                // selección y al soltar se copia al portapapeles.
-                .on_mouse_down(MouseButton::Left, {
-                    let session = Rc::clone(&self.session_manager);
-                    let grid_origin = Rc::clone(&grid_origin);
-                    let drag_selecting = Rc::clone(&drag_selecting);
-                    let cell_width = metrics.cell_width;
-                    let cell_height = metrics.cell_height;
-                    let padding = metrics.padding;
-                    move |event, window, _cx| {
-                        let (origin_x, origin_y) = grid_origin.get();
-                        let cell = cell_under_pointer(
-                            event.position.x.into(),
-                            event.position.y.into(),
-                            origin_x + padding,
-                            origin_y + padding,
-                            cell_width,
-                            cell_height,
-                        );
-                        let kind = selection_kind_for_click_count(event.click_count);
-                        session
-                            .borrow_mut()
-                            .active_session_mut()
-                            .start_selection(cell, kind);
-                        drag_selecting.set(true);
-                        window.refresh();
-                    }
-                })
+                // Ratón: el programa que pide reportes (pi, vim, less) se queda
+                // con el gesto —pulsación, arrastre y liberación— y PORT no
+                // inicia selección. Sin reportes, o con Shift como salida de
+                // emergencia, el gesto es de PORT: un clic ancla la celda, doble
+                // clic la palabra y triple clic la línea; el arrastre extiende y
+                // al soltar se copia.
+                .on_mouse_down(MouseButton::Left, mouse_down(MouseButton::Left))
+                .on_mouse_down(MouseButton::Middle, mouse_down(MouseButton::Middle))
+                .on_mouse_down(MouseButton::Right, mouse_down(MouseButton::Right))
                 .on_mouse_move({
-                    let session = Rc::clone(&self.session_manager);
+                    let session = Rc::clone(&mouse_session);
                     let grid_origin = Rc::clone(&grid_origin);
                     let drag_selecting = Rc::clone(&drag_selecting);
-                    let cell_width = metrics.cell_width;
-                    let cell_height = metrics.cell_height;
-                    let padding = metrics.padding;
-                    move |event, window, _cx| {
+                    let program_drag = Rc::clone(&program_drag);
+                    move |event: &MouseMoveEvent, window: &mut Window, _cx: &mut App| {
+                        // Mientras el programa capture el gesto, el movimiento
+                        // es suyo. Se reenvía sin repintar: un reporte no cambia
+                        // la rejilla, y pi habilita todos los movimientos (1003).
+                        if let Some(held) = program_drag.get() {
+                            let cell = cell_at_pointer(
+                                &grid_origin,
+                                event.position,
+                                cell_width,
+                                cell_height,
+                                padding,
+                            );
+                            session.borrow_mut().active_session_mut().mouse_motion(
+                                cell,
+                                Some(held),
+                                mouse_modifiers(event.modifiers),
+                            );
+                            return;
+                        }
                         // Solo se extiende durante un arrastre: gpui entrega
                         // movimientos siempre que el puntero esté encima, y sin
                         // la bandera un simple pasar por encima movería la
@@ -289,14 +377,12 @@ impl Render for TerminalView {
                         if !drag_selecting.get() {
                             return;
                         }
-                        let (origin_x, origin_y) = grid_origin.get();
-                        let cell = cell_under_pointer(
-                            event.position.x.into(),
-                            event.position.y.into(),
-                            origin_x + padding,
-                            origin_y + padding,
+                        let cell = cell_at_pointer(
+                            &grid_origin,
+                            event.position,
                             cell_width,
                             cell_height,
+                            padding,
                         );
                         session
                             .borrow_mut()
@@ -308,22 +394,12 @@ impl Render for TerminalView {
                 // Soltar dentro del contenedor y soltar fuera de él comparten
                 // el cierre: si el arrastre termina en el borde, `on_mouse_up`
                 // no dispara y la bandera quedaría encendida.
-                .on_mouse_up(MouseButton::Left, {
-                    let session = Rc::clone(&self.session_manager);
-                    let drag_selecting = Rc::clone(&drag_selecting);
-                    move |_event, window, cx| {
-                        finish_drag(&session, &drag_selecting, cx);
-                        window.refresh();
-                    }
-                })
-                .on_mouse_up_out(MouseButton::Left, {
-                    let session = Rc::clone(&self.session_manager);
-                    let drag_selecting = Rc::clone(&drag_selecting);
-                    move |_event, window, cx| {
-                        finish_drag(&session, &drag_selecting, cx);
-                        window.refresh();
-                    }
-                })
+                .on_mouse_up(MouseButton::Left, mouse_up(MouseButton::Left))
+                .on_mouse_up(MouseButton::Middle, mouse_up(MouseButton::Middle))
+                .on_mouse_up(MouseButton::Right, mouse_up(MouseButton::Right))
+                .on_mouse_up_out(MouseButton::Left, mouse_up(MouseButton::Left))
+                .on_mouse_up_out(MouseButton::Middle, mouse_up(MouseButton::Middle))
+                .on_mouse_up_out(MouseButton::Right, mouse_up(MouseButton::Right))
                 .child(
                     canvas(
                         {
@@ -450,6 +526,65 @@ fn cell_under_pointer(
     let column = ((pointer_x - origin_x) / cell_width).floor() as i32 + 1;
     let row = ((pointer_y - origin_y) / cell_height).floor() as i32 + 1;
     CellPos::new(column, row)
+}
+
+/// Celda (1-based) bajo una posición de ventana.
+///
+/// Es la traducción que comparten todos los eventos de ratón: la esquina de la
+/// rejilla y el margen interior ya se descuentan aquí, y el recorte a la
+/// primera celda lo hace `CellPos`.
+fn cell_at_pointer(
+    grid_origin: &Cell<(f32, f32)>,
+    position: Point<Pixels>,
+    cell_width: f32,
+    cell_height: f32,
+    padding: f32,
+) -> CellPos {
+    let (origin_x, origin_y) = grid_origin.get();
+    cell_under_pointer(
+        position.x.into(),
+        position.y.into(),
+        origin_x + padding,
+        origin_y + padding,
+        cell_width,
+        cell_height,
+    )
+}
+
+/// Traduce el botón de gpui al botón del protocolo de terminal.
+///
+/// El protocolo SGR no tiene los botones de navegación (atrás/adelante), así
+/// que no se traducen. Los manejadores solo se registran para los tres botones
+/// reales, de modo que ese camino nunca llega aquí.
+fn terminal_button(button: MouseButton) -> Option<TerminalMouseButton> {
+    match button {
+        MouseButton::Left => Some(TerminalMouseButton::Left),
+        MouseButton::Middle => Some(TerminalMouseButton::Middle),
+        MouseButton::Right => Some(TerminalMouseButton::Right),
+        MouseButton::Navigate(_) => None,
+    }
+}
+
+/// Traduce los modificadores de gpui a los que viajan en el reporte SGR.
+///
+/// La tecla plataforma (Super) no existe en el protocolo: solo Shift, Alt y
+/// Ctrl acompañan a un reporte de ratón.
+fn mouse_modifiers(modifiers: Modifiers) -> MouseModifiers {
+    MouseModifiers {
+        shift: modifiers.shift,
+        ctrl: modifiers.control,
+        alt: modifiers.alt,
+    }
+}
+
+/// `true` si el gesto debe convertirse en selección local de PORT.
+///
+/// El programa gana el gesto cuando pidió reportes de ratón y el núcleo le
+/// reenvió la pulsación; la selección local solo nace del botón izquierdo que
+/// el programa no consumió, nunca de los botones medio o derecho. Es pura para
+/// poder verificarla sin ventana.
+fn starts_local_selection(button: MouseButton, consumed_by_program: bool) -> bool {
+    matches!(button, MouseButton::Left) && !consumed_by_program
 }
 
 /// Cierra un arrastre de selección: apaga la bandera y copia lo seleccionado.
@@ -1122,6 +1257,65 @@ mod tests {
             cell_under_pointer(24.0, 5.0, 20.0, 10.0, 8.0, 19.0),
             CellPos::new(1, 1),
             "por encima del origen también se recorta a la primera fila"
+        );
+    }
+
+    /// La selección local solo nace del botón izquierdo que el programa no
+    /// consumió: un gesto capturado por el programa (pi, vim, less) le
+    /// pertenece, y los botones medio y derecho nunca seleccionan.
+    #[test]
+    fn la_seleccion_local_solo_nace_del_izquierdo_no_consumido() {
+        assert!(starts_local_selection(MouseButton::Left, false));
+        assert!(!starts_local_selection(MouseButton::Left, true));
+        assert!(!starts_local_selection(MouseButton::Middle, false));
+        assert!(!starts_local_selection(MouseButton::Right, false));
+    }
+
+    /// Los modificadores de gpui se traducen a los del reporte SGR; la tecla
+    /// plataforma (Super) no viaja en el protocolo.
+    #[test]
+    fn los_modificadores_de_gpui_se_traducen_al_reporte() {
+        let mods = mouse_modifiers(Modifiers {
+            shift: true,
+            control: true,
+            alt: true,
+            platform: true,
+            function: true,
+        });
+        assert_eq!(
+            mods,
+            MouseModifiers {
+                shift: true,
+                ctrl: true,
+                alt: true,
+            }
+        );
+        assert_eq!(
+            mouse_modifiers(Modifiers::default()),
+            MouseModifiers::default()
+        );
+    }
+
+    /// Los tres botones reales se traducen a los del protocolo y los de
+    /// navegación (atrás/adelante) no: el protocolo SGR no los tiene y los
+    /// manejadores solo se registran para los tres reales.
+    #[test]
+    fn los_botones_de_navegacion_no_se_traducen() {
+        assert_eq!(
+            terminal_button(MouseButton::Left),
+            Some(TerminalMouseButton::Left)
+        );
+        assert_eq!(
+            terminal_button(MouseButton::Middle),
+            Some(TerminalMouseButton::Middle)
+        );
+        assert_eq!(
+            terminal_button(MouseButton::Right),
+            Some(TerminalMouseButton::Right)
+        );
+        assert_eq!(
+            terminal_button(MouseButton::Navigate(gpui::NavigationDirection::Back)),
+            None
         );
     }
 }
