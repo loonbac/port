@@ -20,6 +20,7 @@ use gpui::{
     px, size, App, Application, Bounds, WindowBackgroundAppearance, WindowBounds, WindowOptions,
 };
 use port_plugin_api::{CloseDecision, KeyAction, PluginRegistry};
+use port_plugin_herdr::HerdrPlugin;
 use port_term_core::input::Key;
 use port_term_core::pty::PtyConfig;
 use port_term_core::session::SessionManager;
@@ -53,6 +54,8 @@ fn run_terminal() {
     Application::new().run(|cx: &mut App| {
         // Registro de plugins y carga de configuración central
         let mut plugin_registry = PluginRegistry::new();
+        // herdr dibuja con GPUI, asi que va compilado dentro de PORT.
+        plugin_registry.register(HerdrPlugin::new());
         let close_prompt = Rc::new(RefCell::new(ClosePromptState::default()));
 
         // La configuración se carga ANTES de arrancar externos: el `enabled`

@@ -27,6 +27,17 @@ libc = "=0.2.189"
 port-term-core = { path = "crates/term-core" }
 port-plugin-api = { path = "crates/plugin-api" }
 
+# herdr dibuja con GPUI, asi que se compila dentro de PORT (ruta in-process
+# de port-plugins). La rama es el canal movil: el Cargo.lock fija el commit.
+port-plugin-herdr = { git = "https://github.com/loonbac/port-plugins.git", branch = "master" }
+
+# Los plugins llegan como dependencias git, pero deben usar el API y el core de
+# ESTE repo: son el mismo codigo, no dos copias. Sin esto, `Plugin` se resuelve
+# a dos crates distintos y el registro no compila.
+[patch."https://github.com/loonbac/port.git"]
+port-term-core = { path = "crates/term-core" }
+port-plugin-api = { path = "crates/plugin-api" }
+
 [profile.dev]
 opt-level = 1
 

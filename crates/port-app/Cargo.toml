@@ -13,3 +13,6 @@ path = "src/main.rs"
 gpui = { workspace = true }
 port-term-core = { path = "../term-core" }
 port-plugin-api = { path = "../plugin-api" }
+# herdr draws with GPUI, so it is compiled into PORT itself (see the root
+# Cargo.toml for the git dependency and the port.git patch).
+port-plugin-herdr = { workspace = true }

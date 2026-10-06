@@ -3862,6 +3862,7 @@ version = "0.1.2"
 dependencies = [
  "gpui",
  "port-plugin-api",
+ "port-plugin-herdr",
  "port-term-core",
 ]
 
@@ -3875,6 +3876,17 @@ dependencies = [
  "serde",
  "serde_json",
  "toml 0.8.23",
+]
+
+[[package]]
+name = "port-plugin-herdr"
+version = "0.1.0"
+source = "git+https://github.com/loonbac/port-plugins.git?branch=master#34c9113c1a45acccacd75157311f69cb75d6fc09"
+dependencies = [
+ "gpui",
+ "port-plugin-api",
+ "port-term-core",
+ "serde_json",
 ]
 
 [[package]]
