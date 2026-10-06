@@ -160,6 +160,9 @@ pub struct PluginManifest {
     /// Ruta absoluta del ejecutable.
     pub executable: String,
     /// Repositorio del que vino.
+    ///
+    /// Vacío = instalación antigua sin fuente registrada.
+    #[serde(default)]
     pub source: String,
     /// Capabilities declaradas en el último saludo.
     #[serde(default)]

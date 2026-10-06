@@ -1011,6 +1011,38 @@ capabilities = ["appearance", "input"]
     }
 
     #[test]
+    fn la_instalacion_guarda_el_origen_y_supervive_la_lectura() {
+        // El origen es lo único que permite actualizar después: si no queda
+        // escrito en el manifiesto, `port plugin update` no tendría de dónde
+        // tirar. La instalación ya lo persiste; esta prueba fija esa ida y
+        // vuelta para que un cambio futuro no la rompa en silencio.
+        if !cargo_disponible() {
+            eprintln!("sin compilador: se omite la comprobación del origen");
+            return;
+        }
+        let root = fixture_workspace("source");
+        let dest =
+            std::env::temp_dir().join(format!("port-monorepo-sourcedest-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dest);
+
+        let source = format!("{}#plugins/demo", root.display());
+        let installed = install_into(&source, &dest).expect("el plugin debería instalarse");
+        assert_eq!(installed.source, source, "el origen debe quedar tal cual");
+
+        let read_back = host::installed_in(&dest)
+            .into_iter()
+            .find(|m| m.id == "demo")
+            .expect("el manifiesto debería leerse de vuelta");
+        assert_eq!(
+            read_back.source, source,
+            "el origen debe sobrevivir la ida y vuelta por el manifiesto"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&dest);
+    }
+
+    #[test]
     fn un_workspace_virtual_sin_selector_lista_los_plugins_disponibles() {
         let root = fixture_workspace("list");
         let dest = std::env::temp_dir().join(format!("port-monorepo-list-{}", std::process::id()));

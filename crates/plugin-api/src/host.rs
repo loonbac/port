@@ -802,4 +802,36 @@ done
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn un_manifiesto_sin_origen_se_lee_con_origen_vacio() {
+        // Instalación anterior a que se guardara el origen: el campo no está.
+        // Debe leerse igual (origen vacío) en lugar de descartarse en
+        // silencio, que ocultaría el plugin del listado y de la interfaz.
+        let dir = scratch("legacy-source");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("legacy.json"),
+            r#"{
+  "id": "legacy",
+  "name": "Legacy",
+  "version": "0.1.0",
+  "executable": "/no/existe/legacy",
+  "capabilities": []
+}
+"#,
+        )
+        .unwrap();
+
+        let found = installed_in(&dir);
+        assert_eq!(
+            found.len(),
+            1,
+            "un manifiesto antiguo no debe descartarse en silencio"
+        );
+        assert_eq!(found[0].id, "legacy");
+        assert_eq!(found[0].source, "", "sin origen registrado queda vacío");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

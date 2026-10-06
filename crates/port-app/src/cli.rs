@@ -21,6 +21,7 @@ pub enum Command {
 #[derive(Debug)]
 pub enum PluginCommand {
     Add { url: String },
+    Update { id: String },
     List,
     Remove { id: String },
 }
@@ -31,6 +32,7 @@ PORT: terminal y plataforma de plugins
 uso:
   port                        abre la terminal
   port plugin add <url>       instala un plugin desde un repositorio
+  port plugin update <id>     actualiza un plugin desde su origen
   port plugin list            muestra los plugins instalados
   port plugin remove <id>     desinstala un plugin
   port --help                 esta ayuda
@@ -49,6 +51,10 @@ pub fn parse(args: impl Iterator<Item = String>) -> Command {
                 None => Command::Help,
             },
             Some("list") => Command::Plugin(PluginCommand::List),
+            Some("update") => match args.get(2) {
+                Some(id) => Command::Plugin(PluginCommand::Update { id: id.clone() }),
+                None => Command::Help,
+            },
             Some("remove") | Some("rm") => match args.get(2) {
                 Some(id) => Command::Plugin(PluginCommand::Remove { id: id.clone() }),
                 None => Command::Help,
@@ -80,6 +86,31 @@ pub fn run(command: PluginCommand) -> i32 {
                 1
             }
         },
+        PluginCommand::Update { id } => {
+            let Some(manifest) = host::installed().into_iter().find(|m| m.id == id) else {
+                eprintln!("no está instalado: {id}");
+                return 1;
+            };
+            if manifest.source.is_empty() {
+                eprintln!(
+                    "el plugin {id} no tiene origen registrado: reinstálalo con `port plugin add <fuente>`"
+                );
+                return 1;
+            }
+            match install::install(&manifest.source) {
+                Ok(updated) => {
+                    // Reemplaza el binario dejando el estado de habilitación a
+                    // gusto del usuario: actualizar no es una forma de encender.
+                    println!("actualizado {} {}", updated.name, updated.version);
+                    println!("  reinicia PORT para cargarlo");
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    1
+                }
+            }
+        }
         PluginCommand::List => {
             let manifests = host::installed();
             if manifests.is_empty() {
@@ -192,6 +223,47 @@ mod tests {
         assert_eq!(run(PluginCommand::List), 0);
         unsafe { std::env::remove_var("PORT_PLUGIN_DIR") };
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn plugin_update_takes_the_id() {
+        match parse(args(&["plugin", "update", "demo"]).into_iter()) {
+            Command::Plugin(PluginCommand::Update { id }) => assert_eq!(id, "demo"),
+            other => panic!("no se reconoce plugin update: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn updating_an_unknown_plugin_fails_cleanly() {
+        // Ningún plugin instalado puede llamarse así: el directorio real
+        // basta y no hay que pisar `PORT_PLUGIN_DIR`, que es global.
+        assert_eq!(
+            run(PluginCommand::Update {
+                id: "no-existe".into()
+            }),
+            1
+        );
+    }
+
+    #[test]
+    fn updating_a_legacy_plugin_asks_for_a_reinstall() {
+        // Una instalación antigua no guardó el origen: no hay de dónde
+        // actualizar y el mensaje debe mandar a reinstalar.
+        let dir = std::env::temp_dir().join(format!("port-cli-update-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("legacy.json"),
+            r#"{"id":"legacy","name":"Legacy","version":"0.1.0","executable":"/no/existe/legacy","capabilities":[]}"#,
+        )
+        .unwrap();
+        unsafe { std::env::set_var("PORT_PLUGIN_DIR", &dir) };
+        let code = run(PluginCommand::Update {
+            id: "legacy".into(),
+        });
+        unsafe { std::env::remove_var("PORT_PLUGIN_DIR") };
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(code, 1, "sin origen no se puede actualizar");
     }
 
     #[test]
