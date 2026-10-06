@@ -16,26 +16,16 @@ use gpui::{
     TextRun, Window,
 };
 use port_term_core::frame::{Frame, Rgb, Run, Style};
+use port_term_core::session::MousePolicy;
 
 use crate::metrics::Metrics;
-
-/// Fondo translúcido del resaltado de selección.
-///
-/// Reutiliza el azul acento que ya usa el diálogo de cierre de esta misma
-/// vista en lugar de inventar una paleta nueva. Es un azul medio, no un gris:
-/// un tono neutro se pierde igual sobre fondos oscuros que claros. Se pinta
-/// por debajo de los glifos, así que el texto conserva su color y se lee sobre
-/// el resaltado en cualquier tema sin recolorearse.
-const SELECTION_BG: Rgb = Rgb::new(0x58, 0xa6, 0xff);
-/// Opacidad del resaltado: suficiente para distinguir el rango, tenue para no
-/// tapar el texto que va encima.
-const SELECTION_BG_OPACITY: f32 = 0.35;
 
 /// Pinta el cuadro completo: quads de fondo, glifos geométricos y texto.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_frame(
     bounds: Bounds<Pixels>,
     frame: &Frame,
+    policy: MousePolicy,
     metrics: &Metrics,
     default_bg: Rgb,
     font_family: &str,
@@ -83,13 +73,16 @@ pub(crate) fn paint_frame(
         let mut left = origin_x;
 
         // El resaltado va antes que los runs de la fila: el fondo y los glifos
-        // se pintan encima y el texto sigue legible sobre el azul translúcido.
+        // se pintan encima y el texto sigue legible sobre el color translúcido.
+        // El color y la opacidad salen de la política de la sesión; el default
+        // documentado en `MousePolicy::default()` es el único que fija los
+        // valores de fábrica.
         if let Some(span) = row.selection {
             let selected_x = origin_x + cell_width * span.start as f32;
             let selected_width = cell_width * (span.end.saturating_sub(span.start) + 1) as f32;
             window.paint_quad(fill(
                 Bounds::new(point(selected_x, top), size(selected_width, cell_height)),
-                color(SELECTION_BG).opacity(SELECTION_BG_OPACITY),
+                color(policy.highlight).opacity(policy.highlight_opacity),
             ));
         }
 

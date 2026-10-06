@@ -9,7 +9,8 @@ use std::rc::Rc;
 
 use gpui::{App, ClipboardItem, Modifiers, MouseButton, Pixels, Point, ScrollDelta};
 use port_term_core::session::{
-    CellPos, MouseButton as TerminalMouseButton, MouseModifiers, SelectionKind, SessionManager,
+    CellPos, MouseButton as TerminalMouseButton, MouseModifiers, MousePolicy, SelectionKind,
+    SessionManager,
 };
 
 /// Cuántas líneas del scrollback mueve un evento de rueda.
@@ -45,18 +46,34 @@ pub(crate) fn wheel_lines(delta: ScrollDelta, line_height: f32) -> i32 {
     }
 }
 
-/// Traduce el recuento de clics al tipo de selección del núcleo.
+/// Traduce el recuento de clics al tipo de selección del núcleo, según la
+/// política de la sesión.
 ///
-/// Un clic selecciona celdas sueltas, el doble clic la palabra bajo el puntero
-/// y el triple clic la línea entera. Cualquier otro recuento (un cuarto clic o
-/// un valor inesperado) se comporta como un clic simple, para que el gesto
-/// nunca quede sin definir.
-pub(crate) fn selection_kind_for_click_count(click_count: usize) -> SelectionKind {
+/// Un clic selecciona celdas sueltas. El doble clic expande a la palabra bajo
+/// el puntero solo con `word_on_double_click` activo, y el triple a la línea
+/// entera solo con `line_on_triple_click` activo; cuando el switch apagado
+/// corresponde a ese recuento, el gesto degrada a un clic simple. Cualquier
+/// otro recuento (un cuarto clic o un valor inesperado) también es simple,
+/// para que el gesto nunca quede sin definir.
+pub(crate) fn selection_kind_for_click_count(
+    click_count: usize,
+    policy: MousePolicy,
+) -> SelectionKind {
     match click_count {
-        2 => SelectionKind::Word,
-        3 => SelectionKind::Line,
+        2 if policy.word_on_double_click => SelectionKind::Word,
+        3 if policy.line_on_triple_click => SelectionKind::Line,
         _ => SelectionKind::Simple,
     }
+}
+
+/// `true` si al cerrar un arrastre corresponde copiar la selección.
+///
+/// La copia automática la gobierna `copy_on_select` y solo tiene sentido con
+/// texto real: una selección vacía no debe pisar lo que el usuario tuviera
+/// copiado. Con la copia apagada la selección queda disponible para
+/// `Ctrl+Shift+C`, que la lee directamente de la sesión.
+pub(crate) fn should_copy_on_select(policy: MousePolicy, has_selection: bool) -> bool {
+    policy.copy_on_select && has_selection
 }
 
 /// Celda (1-based) bajo el puntero, para el reporte SGR del ratón.
@@ -147,9 +164,17 @@ pub(crate) fn finish_drag(
     cx: &mut App,
 ) {
     drag_selecting.set(false);
-    let text = session.borrow().active_session().selection_text();
-    if let Some(text) = text {
-        if !text.is_empty() {
+    // La política vive en la sesión: la vista no guarda una segunda copia. Con
+    // `copy_on_select` apagado la selección no se toca y `Ctrl+Shift+C` la lee
+    // de la sesión cuando el usuario la pida.
+    let (text, policy) = {
+        let manager = session.borrow();
+        let active = manager.active_session();
+        (active.selection_text(), active.mouse_policy())
+    };
+    let has_selection = text.as_deref().is_some_and(|text| !text.is_empty());
+    if should_copy_on_select(policy, has_selection) {
+        if let Some(text) = text {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
         }
     }
@@ -159,6 +184,7 @@ pub(crate) fn finish_drag(
 mod tests {
     use super::*;
     use gpui::{point, px};
+    use port_term_core::frame::Rgb;
 
     /// Altura de línea de una fuente de 14 px, la misma que produce `Metrics`.
     const LINE_HEIGHT: f32 = 19.0;
@@ -231,20 +257,101 @@ mod tests {
         assert_eq!(wheel_lines(delta, LINE_HEIGHT), 0);
     }
 
-    /// Un clic selecciona una celda, el doble la palabra y el triple la línea.
+    /// Un clic selecciona una celda, el doble la palabra y el triple la línea
+    /// cuando la política conserva los switches de fábrica.
     #[test]
     fn cada_recuento_de_clics_pide_su_tipo_de_seleccion() {
-        assert_eq!(selection_kind_for_click_count(1), SelectionKind::Simple);
-        assert_eq!(selection_kind_for_click_count(2), SelectionKind::Word);
-        assert_eq!(selection_kind_for_click_count(3), SelectionKind::Line);
+        let policy = MousePolicy::default();
+        assert_eq!(
+            selection_kind_for_click_count(1, policy),
+            SelectionKind::Simple
+        );
+        assert_eq!(
+            selection_kind_for_click_count(2, policy),
+            SelectionKind::Word
+        );
+        assert_eq!(
+            selection_kind_for_click_count(3, policy),
+            SelectionKind::Line
+        );
+    }
+
+    /// Con `word_on_double_click` apagado el doble clic deja de expandir a la
+    /// palabra y vuelve al clic simple.
+    #[test]
+    fn el_doble_clic_sin_palabra_se_comporta_como_simple() {
+        let policy = MousePolicy {
+            word_on_double_click: false,
+            ..MousePolicy::default()
+        };
+        assert_eq!(
+            selection_kind_for_click_count(2, policy),
+            SelectionKind::Simple
+        );
+        // El triple clic sigue su propio switch, que aquí sigue activo.
+        assert_eq!(
+            selection_kind_for_click_count(3, policy),
+            SelectionKind::Line
+        );
+    }
+
+    /// Con `line_on_triple_click` apagado el triple clic deja de expandir a la
+    /// línea entera y vuelve al clic simple.
+    #[test]
+    fn el_triple_clic_sin_linea_se_comporta_como_simple() {
+        let policy = MousePolicy {
+            line_on_triple_click: false,
+            ..MousePolicy::default()
+        };
+        assert_eq!(
+            selection_kind_for_click_count(3, policy),
+            SelectionKind::Simple
+        );
+        // El doble clic sigue su propio switch, que aquí sigue activo.
+        assert_eq!(
+            selection_kind_for_click_count(2, policy),
+            SelectionKind::Word
+        );
     }
 
     /// Un cuarto clic (o cualquier recuento raro) vuelve al clic simple: el
-    /// gesto nunca deja la selección sin definir.
+    /// gesto nunca deja la selección sin definir, incluso con los switches
+    /// encendidos.
     #[test]
     fn mas_de_tres_clics_se_comportan_como_uno() {
-        assert_eq!(selection_kind_for_click_count(4), SelectionKind::Simple);
-        assert_eq!(selection_kind_for_click_count(0), SelectionKind::Simple);
+        let policy = MousePolicy::default();
+        assert_eq!(
+            selection_kind_for_click_count(4, policy),
+            SelectionKind::Simple
+        );
+        assert_eq!(
+            selection_kind_for_click_count(0, policy),
+            SelectionKind::Simple
+        );
+    }
+
+    /// La copia al soltar solo ocurre con `copy_on_select` activo y una
+    /// selección con texto real; apagado, la selección queda para
+    /// `Ctrl+Shift+C`.
+    #[test]
+    fn la_copia_al_soltar_respeta_copy_on_select() {
+        let apagado = MousePolicy {
+            copy_on_select: false,
+            ..MousePolicy::default()
+        };
+        assert!(!should_copy_on_select(apagado, true));
+        assert!(should_copy_on_select(MousePolicy::default(), true));
+        assert!(!should_copy_on_select(MousePolicy::default(), false));
+    }
+
+    /// La política por defecto conserva el azul y la opacidad documentados: la
+    /// vista ya no lleva constantes propias, así que este es el único lugar
+    /// que fija el resaltado de fábrica.
+    #[test]
+    fn el_resaltado_por_defecto_conserva_color_y_opacidad() {
+        let policy = MousePolicy::default();
+        assert_eq!(policy.highlight, Rgb::new(0x58, 0xa6, 0xff));
+        assert_eq!(policy.highlight_opacity, 0.35);
     }
 
     /// La rejilla empieza en el origen del área de pintado: la esquina superior

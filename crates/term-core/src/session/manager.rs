@@ -10,7 +10,7 @@ use crate::frame::{Frame, Style};
 use crate::input::KeyMode;
 use crate::pty::{PtyConfig, RunningApp};
 
-use super::{GridSize, Session};
+use super::{GridSize, MousePolicy, Session};
 
 /// Gestor de múltiples sesiones de terminal vivas (espacios de trabajo / pestañas).
 pub struct SessionManager {
@@ -19,6 +19,11 @@ pub struct SessionManager {
     next_id: usize,
     default_config: PtyConfig,
     size: GridSize,
+    /// Política de ratón y selección vigente.
+    ///
+    /// Es del gestor y no de la pestaña: un cambio debe regir también al cambiar
+    /// de pestaña, y una sesión nueva debe nacer con la que está vigente.
+    mouse_policy: MousePolicy,
 }
 
 impl SessionManager {
@@ -33,6 +38,7 @@ impl SessionManager {
             next_id: 1,
             default_config: config,
             size,
+            mouse_policy: MousePolicy::default(),
         })
     }
 
@@ -49,12 +55,26 @@ impl SessionManager {
 
     /// Arranca el PTY de la sesión nueva, la registra y le da el foco.
     fn spawn_session_config(&mut self, config: PtyConfig) -> std::io::Result<usize> {
-        let session = Session::spawn(config, self.size)?;
+        let mut session = Session::spawn(config, self.size)?;
+        // La sesión nueva hereda la política vigente; su dueño es el gestor.
+        session.set_mouse_policy(self.mouse_policy);
         let id = self.next_id;
         self.next_id += 1;
         self.sessions.insert(id, session);
         self.active_id = id;
         Ok(id)
+    }
+
+    /// Aplica una política de ratón y selección a todas las sesiones y la deja
+    /// como la vigente para las que se creen después.
+    ///
+    /// Se aplica a todas y no solo a la activa: un cambio de política debe regir
+    /// también al cambiar de pestaña.
+    pub fn set_mouse_policy(&mut self, policy: MousePolicy) {
+        self.mouse_policy = policy;
+        for session in self.sessions.values_mut() {
+            session.set_mouse_policy(policy);
+        }
     }
 
     /// Selecciona la sesión activa por su ID. Devuelve `true` si el ID existe.

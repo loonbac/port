@@ -177,6 +177,9 @@ impl Render for TerminalView {
         }
 
         let frame = session_mgr.frame();
+        // La sesión es la única fuente de verdad de la política: la vista la
+        // lee aquí, con el préstamo que ya tiene, y no guarda copia propia.
+        let policy = session_mgr.active_session().mouse_policy();
         drop(session_mgr);
         drop(plugins);
 
@@ -236,9 +239,12 @@ impl Render for TerminalView {
                     mouse_modifiers(event.modifiers),
                 );
                 if starts_local_selection(button, consumed) {
-                    // El programa no pidió este gesto: se selecciona igual que
-                    // siempre (clic, doble clic o triple clic).
-                    let kind = selection_kind_for_click_count(event.click_count);
+                    // El programa no pidió este gesto: se selecciona según la
+                    // política de la sesión (clic, doble clic o triple clic).
+                    let kind = selection_kind_for_click_count(
+                        event.click_count,
+                        session.borrow().active_session().mouse_policy(),
+                    );
                     session
                         .borrow_mut()
                         .active_session_mut()
@@ -420,6 +426,7 @@ impl Render for TerminalView {
                             paint_frame(
                                 bounds,
                                 &frame,
+                                policy,
                                 &metrics,
                                 effective_bg,
                                 &font_family,

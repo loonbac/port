@@ -140,6 +140,9 @@ fn run_terminal() {
             SessionManager::new(PtyConfig::default(), metrics.grid_for(width, height))
                 .expect("no se pudo arrancar el shell"),
         ));
+        // La primera sesión también nace con la política vigente, no con su
+        // default interno: el registro ya compone la lista de externos vivos.
+        apply_mouse_policy(&mut session_manager.borrow_mut(), &plugin_registry);
 
         let external_plugins = Rc::new(RefCell::new(running_external));
         let plugins = Rc::new(RefCell::new(plugin_registry));
@@ -282,6 +285,12 @@ fn run_terminal() {
                                 &external_plugins_for_keys.borrow(),
                                 &configs,
                             );
+                            // El toggle cambió el registro: la política vigente
+                            // se reaplica a las sesiones vivas.
+                            apply_mouse_policy(
+                                &mut session_for_keys.borrow_mut(),
+                                &plugins_for_keys.borrow(),
+                            );
                         }
                         MenuAction::ToggleExternal(idx) => {
                             let mut s = menu_state_for_keys.borrow_mut();
@@ -355,11 +364,18 @@ fn run_terminal() {
                                     }
                                 }
                             }
+                            // Encender o apagar un externo cambia el registro:
+                            // la política vigente se reaplica a las sesiones.
+                            apply_mouse_policy(
+                                &mut session_for_keys.borrow_mut(),
+                                &plugins_for_keys.borrow(),
+                            );
                         }
                         MenuAction::StartInstall(url) => {
                             let menu_state_bg = Rc::clone(&menu_state_for_keys);
                             let external_bg = Rc::clone(&external_plugins_for_keys);
                             let plugins_bg = Rc::clone(&plugins_for_keys);
+                            let session_bg = Rc::clone(&session_for_keys);
                             let config_path_bg = config_path_for_keys.clone();
                             let window_bg = window_for_install;
                             cx.spawn(async move |cx| {
@@ -402,6 +418,13 @@ fn run_terminal() {
                                                     // su apariencia entra en la
                                                     // composición de inmediato.
                                                     refresh_externals(&plugins_bg, &external_bg);
+                                                    // Un plugin nuevo puede traer
+                                                    // una política distinta; se
+                                                    // reaplica a las sesiones.
+                                                    apply_mouse_policy(
+                                                        &mut session_bg.borrow_mut(),
+                                                        &plugins_bg.borrow(),
+                                                    );
                                                     s.add_or_update_external(ExternalPluginInfo {
                                                         id: manifest.id.clone(),
                                                         name: manifest.name.clone(),
@@ -700,6 +723,7 @@ fn run_terminal() {
         // Vigila el archivo de configuración y lo recarga en tiempo real ante cualquier cambio en disco.
         let plugins_for_watcher = Rc::clone(&plugins);
         let external_plugins_for_watcher = Rc::clone(&external_plugins);
+        let session_for_watcher = Rc::clone(&session_manager);
         let config_path_for_watcher = config_path.clone();
         let window_for_watcher = window;
         cx.spawn(async move |cx| loop {
@@ -717,6 +741,12 @@ fn run_terminal() {
                 port_plugin_api::host::configure_externals(
                     &external_plugins_for_watcher.borrow(),
                     &configs,
+                );
+                // Recargar el archivo cambia el registro: la política vigente
+                // se reaplica a las sesiones vivas.
+                apply_mouse_policy(
+                    &mut session_for_watcher.borrow_mut(),
+                    &plugins_for_watcher.borrow(),
                 );
                 window_for_watcher
                     .update(cx, |_, window, _cx| window.refresh())
@@ -742,6 +772,17 @@ fn refresh_externals(
     plugins
         .borrow_mut()
         .set_externals(externals.borrow().clone());
+}
+
+/// Aplica a cada sesión viva la política de ratón y selección del registro.
+///
+/// El registro compone la política (el primer plugin con `MouseHook` gana) y la
+/// sesión es la fuente de verdad que después lee la vista. Se llama en cada
+/// punto donde el registro puede cambiar —arranque, encendido o apagado de un
+/// plugin, instalación y recarga de la configuración—. El gestor la guarda como
+/// la vigente y la aplica también a las sesiones que se creen después.
+fn apply_mouse_policy(sessions: &mut SessionManager, registry: &PluginRegistry) {
+    sessions.set_mouse_policy(registry.mouse_policy());
 }
 
 /// Detiene un plugin externo vivo y lo saca de la lista de procesos.
