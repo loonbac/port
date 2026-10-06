@@ -95,6 +95,11 @@
 
             cargoLock = {
               lockFile = ./Cargo.lock;
+              outputHashes = {
+                # herdr llega como dependencia git (ruta in-process de
+                # port-plugins): su vendor necesita hash propio.
+                "port-plugin-herdr-0.1.0" = "sha256-abITzi33iuLgVtlqv0EA0oWyO30ZlKKI8ynqrZw+HJU=";
+              };
             };
 
             postInstall = ''
