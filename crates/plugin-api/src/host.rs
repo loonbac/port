@@ -25,6 +25,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::config::{ConfigFile, PluginConfig};
 use crate::protocol::{
     Appearance, Binding, Capability, HostRequest, PluginManifest, PluginReply, DEFAULT_TIMEOUT_MS,
     PROTOCOL_VERSION,
@@ -233,6 +234,26 @@ impl ExternalPlugin {
             }
             Err(_) => false,
         }
+    }
+
+    /// Vuelve a leer lo que el plugin declara, sin reiniciar su proceso.
+    ///
+    /// Aplicar la configuración puede cambiar la apariencia, los atajos y las
+    /// capacidades que un plugin anuncia, y la copia cacheada es la del saludo
+    /// inicial: sin esta relectura, `opacity` o `family` escritos en
+    /// `config.md` no llegarían nunca a `effective_opacity` ni a
+    /// `effective_font_family`.
+    ///
+    /// No se reutiliza [`ExternalPlugin::reload`] a propósito: `reload` mata el
+    /// proceso y arranca otro, con lo que se perdería la configuración recién
+    /// aplicada, y además vacía las respuestas en cola. Rehacer el saludo solo
+    /// vuelve a preguntar, que es lo que hace falta.
+    ///
+    /// Orden de arranque: `start()` y después `configure_externals()`, así que
+    /// tras esta relectura la copia cacheada termina coincidiendo con
+    /// `config.md`.
+    fn refresh_declaration(&self) -> Result<(), PluginError> {
+        self.handshake()
     }
 
     /// Apariencia que el plugin declaró al arrancar.
@@ -454,6 +475,49 @@ impl std::fmt::Display for PluginError {
 
 impl std::error::Error for PluginError {}
 
+/// Envía a cada plugin externo el bloque de configuración de su id.
+///
+/// Un fallo al configurar no apaga el plugin: se registra y se continúa, igual
+/// que el resto de errores no críticos del anfitrión. La configuración es una
+/// comodidad, no un requisito para que el plugin funcione.
+pub fn configure_externals(
+    plugins: &[Arc<ExternalPlugin>],
+    configs: &BTreeMap<String, PluginConfig>,
+) {
+    for plugin in plugins {
+        let id = plugin.manifest().id.clone();
+        if let Some(block) = configs.get(&id) {
+            if !plugin.configure(block.values.clone()) {
+                eprintln!("no se pudo configurar el plugin externo {id}; se ignora");
+                continue;
+            }
+            // El bloque puede haber cambiado lo que el plugin declara: hay que
+            // releerlo para que la ventana use los valores configurados. Un
+            // fallo al releer no apaga el plugin; se conserva lo que ya había.
+            if let Err(e) = plugin.refresh_declaration() {
+                eprintln!(
+                    "no se pudo releer la declaración del plugin externo {id}: {e}; se ignora"
+                );
+            }
+        }
+    }
+}
+
+/// Manifiestos instalados que la configuración persistida deja arrancar.
+///
+/// Un plugin recién instalado sin bloque cuenta como habilitado; solo
+/// `enabled = false` lo excluye. El bucle de arranque de PORT usa esto para no
+/// levantar los plugins que el usuario apagó.
+pub fn enabled_manifests(
+    manifests: Vec<PluginManifest>,
+    configs: &BTreeMap<String, PluginConfig>,
+) -> Vec<PluginManifest> {
+    manifests
+        .into_iter()
+        .filter(|manifest| ConfigFile::is_enabled(configs, &manifest.id))
+        .collect()
+}
+
 /// Lee los manifiestos instalados sin arrancar nada.
 ///
 /// Sirve para que `port plugin list` y el gestor de la interfaz sean rápidos:
@@ -587,11 +651,26 @@ fi
 if [ "$MODE" = ok ]; then
   printf '{"t":"ready","name":"probe","version":"0.1.0","capabilities":["appearance"],"bindings":[{"key":"t","ctrl":true,"shift":true,"action":"new_tab"}],"appearance":{"opacity":0.5}}\n'
 fi
+opacity=0
+configured=0
 while IFS= read -r line; do
   case "$line" in
+    # El saludo de arranque ya se imprimió arriba. Tras aplicar la
+    # configuración hay que volver a declarar la apariencia cuando el anfitrión
+    # rehace el saludo.
+    *hello*)
+      if [ "$configured" = 1 ]; then
+        printf '{"t":"ready","name":"probe","version":"0.1.0","capabilities":["appearance"],"bindings":[{"key":"t","ctrl":true,"shift":true,"action":"new_tab"}],"appearance":{"opacity":0.5}}\n'
+      fi
+      ;;
+    *configure*)
+      configured=1
+      opacity=$(printf '%s' "$line" | sed -n 's/.*"opacity":"\([^"]*\)".*/\1/p')
+      printf '{"t":"ack"}\n'
+      ;;
     *invoke*)
       seq=$(printf '%s' "$line" | sed -n 's/.*"seq":\([0-9]*\).*/\1/p')
-      printf '{"t":"result","seq":%s,"ok":true,"value":{"v":1}}\n' "$seq"
+      printf '{"t":"result","seq":%s,"ok":true,"value":{"v":1,"opacity":"%s"}}\n' "$seq" "$opacity"
       ;;
   esac
 done
@@ -633,6 +712,22 @@ done
         let plugin = ExternalPlugin::start(manifest(&exe)).unwrap();
         let value = plugin.invoke("new_tab").expect("deberia devolver un valor");
         assert_eq!(value["v"], 1);
+    }
+
+    #[test]
+    fn la_configuracion_llega_al_plugin_externo() {
+        let exe = write_probe("ok");
+        let plugin = ExternalPlugin::start(manifest(&exe)).unwrap();
+
+        let mut block = PluginConfig::new();
+        block.set("opacity", "0.5");
+        let mut configs = BTreeMap::new();
+        configs.insert("probe".to_string(), block);
+
+        configure_externals(&[Arc::clone(&plugin)], &configs);
+
+        let value = plugin.invoke("new_tab").expect("deberia responder");
+        assert_eq!(value["opacity"], "0.5", "el bloque debe llegar al plugin");
     }
 
     #[test]

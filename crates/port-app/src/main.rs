@@ -10,7 +10,9 @@ mod metrics;
 mod view;
 
 use std::cell::RefCell;
+use std::path::Path;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::prelude::*;
@@ -53,16 +55,31 @@ fn run_terminal() {
         let mut plugin_registry = PluginRegistry::new();
         let close_prompt = Rc::new(RefCell::new(ClosePromptState::default()));
 
+        // La configuración se carga ANTES de arrancar externos: el `enabled`
+        // persistido decide quién arranca. `load_or_create_default_config`
+        // crea el archivo con los defaults de los plugins en proceso.
+        let config_path = plugin_registry
+            .load_or_create_default_config()
+            .unwrap_or_else(|_| port_plugin_api::ConfigFile::default_path());
+        let external_configs = read_external_configs(&config_path);
+
         // Plugins externos instalados con `port plugin add` o desde el menú.
         // Se cargan y arrancan sin bloquear el inicio si alguno falla.
         let installed = port_plugin_api::host::installed();
-        let mut running_external: Vec<std::sync::Arc<port_plugin_api::host::ExternalPlugin>> =
-            Vec::new();
+        let mut running_external: Vec<Arc<port_plugin_api::host::ExternalPlugin>> = Vec::new();
         let mut external_infos: Vec<ExternalPluginInfo> = Vec::new();
 
-        for manifest in installed {
+        for manifest in
+            port_plugin_api::host::enabled_manifests(installed.clone(), &external_configs)
+        {
             match port_plugin_api::host::ExternalPlugin::start(manifest.clone()) {
                 Ok(plugin) => {
+                    // El bloque del plugin llega una vez arrancado, igual que
+                    // en cada recarga del archivo de configuración.
+                    port_plugin_api::host::configure_externals(
+                        &[Arc::clone(&plugin)],
+                        &external_configs,
+                    );
                     running_external.push(plugin);
                     external_infos.push(ExternalPluginInfo {
                         id: manifest.id,
@@ -78,18 +95,36 @@ fn run_terminal() {
                         id: manifest.id,
                         name: manifest.name,
                         version: manifest.version,
-                        enabled: false,
+                        // La configuración lo deja habilitado, pero el
+                        // proceso no arrancó: el menú refleja ambas cosas.
+                        enabled: true,
                         running: false,
                     });
                 }
             }
         }
+
+        // Los apagados por configuración se listan igual, para poder encenderlos.
+        for manifest in installed {
+            if external_infos.iter().any(|info| info.id == manifest.id) {
+                continue;
+            }
+            external_infos.push(ExternalPluginInfo {
+                id: manifest.id,
+                name: manifest.name,
+                version: manifest.version,
+                enabled: false,
+                running: false,
+            });
+        }
         if !running_external.is_empty() {
             eprintln!("{} plugin(s) externo(s) cargados", running_external.len());
         }
 
-        // Carga la configuración desde ~/.config/port/config.md o la crea con los defaults
-        let _ = plugin_registry.load_or_create_default_config();
+        // El registro compone la apariencia de ambas fuentes, así que recibe la
+        // lista de externos vivos antes de calcular el tamaño inicial: un
+        // `font` externo también decide el tamaño de arranque.
+        plugin_registry.set_externals(running_external.clone());
 
         // El tamaño de fuente inicial se deriva de los plugins (ej. font-zoom)
         let initial_font_size = plugin_registry.effective_font_size(BASE_FONT_SIZE);
@@ -146,6 +181,7 @@ fn run_terminal() {
         let menu_state_for_keys = Rc::clone(&menu_state);
         let close_prompt_for_keys = Rc::clone(&close_prompt);
         let external_plugins_for_keys = Rc::clone(&external_plugins);
+        let config_path_for_keys = config_path.clone();
         let window_for_install = window;
         cx.intercept_keystrokes(move |ev, window, cx| {
             if let Some(key) = keys::to_core_key(&ev.keystroke) {
@@ -229,10 +265,19 @@ fn run_terminal() {
                             menu_state_for_keys.borrow_mut().open = false;
                         }
                         MenuAction::ToggleCompiled(idx) => {
-                            let mut reg = plugins_for_keys.borrow_mut();
-                            if let Some(_new_status) = reg.toggle_enabled_at(idx) {
-                                let _ = reg.save_all_to_default_file();
+                            {
+                                let mut reg = plugins_for_keys.borrow_mut();
+                                if let Some(_new_status) = reg.toggle_enabled_at(idx) {
+                                    let _ = reg.save_all_to_default_file();
+                                }
                             }
+                            // Guardar la configuración también alimenta a los
+                            // externos: el archivo es el mismo para todos.
+                            let configs = read_external_configs(&config_path_for_keys);
+                            port_plugin_api::host::configure_externals(
+                                &external_plugins_for_keys.borrow(),
+                                &configs,
+                            );
                         }
                         MenuAction::ToggleExternal(idx) => {
                             let mut s = menu_state_for_keys.borrow_mut();
@@ -241,9 +286,26 @@ fn run_terminal() {
                                     p_info.running = false;
                                     p_info.enabled = false;
                                     let id = p_info.id.clone();
+                                    eprintln!("[tienda] plugin {id} desactivado desde el menu");
                                     external_plugins_for_keys
                                         .borrow_mut()
                                         .retain(|p| p.manifest().id != id);
+                                    // La apariencia se compone en el registro:
+                                    // reflejar la lista nueva hace que el
+                                    // externo apagado deje de aportar ya.
+                                    refresh_externals(
+                                        &plugins_for_keys,
+                                        &external_plugins_for_keys,
+                                    );
+                                    // Persistir el apagado: sin esto, el próximo
+                                    // arranque de PORT lo reactivaría.
+                                    if let Err(e) = port_plugin_api::ConfigFile::set_enabled(
+                                        &config_path_for_keys,
+                                        &id,
+                                        false,
+                                    ) {
+                                        eprintln!("no se pudo guardar enabled=false para {id}: {e}");
+                                    }
                                 } else {
                                     let id = p_info.id.clone();
                                     if let Some(manifest) = port_plugin_api::host::installed()
@@ -253,14 +315,39 @@ fn run_terminal() {
                                         match port_plugin_api::host::ExternalPlugin::start(manifest)
                                         {
                                             Ok(plugin) => {
+                                                let configs =
+                                                    read_external_configs(&config_path_for_keys);
+                                                port_plugin_api::host::configure_externals(
+                                                    &[Arc::clone(&plugin)],
+                                                    &configs,
+                                                );
                                                 external_plugins_for_keys.borrow_mut().push(plugin);
+                                                refresh_externals(
+                                                    &plugins_for_keys,
+                                                    &external_plugins_for_keys,
+                                                );
                                                 p_info.running = true;
                                                 p_info.enabled = true;
+                                                eprintln!("[tienda] plugin {id} activado desde el menu");
+                                                if let Err(e) =
+                                                    port_plugin_api::ConfigFile::set_enabled(
+                                                        &config_path_for_keys,
+                                                        &id,
+                                                        true,
+                                                    )
+                                                {
+                                                    eprintln!(
+                                                        "no se pudo guardar enabled=true para {id}: {e}"
+                                                    );
+                                                }
                                             }
                                             Err(e) => {
                                                 eprintln!("no se pudo iniciar plugin {id}: {e}");
                                                 p_info.running = false;
-                                                p_info.enabled = false;
+                                                // La configuración sigue diciendo
+                                                // habilitado; solo el proceso
+                                                // no está vivo.
+                                                p_info.enabled = true;
                                             }
                                         }
                                     }
@@ -270,6 +357,8 @@ fn run_terminal() {
                         MenuAction::StartInstall(url) => {
                             let menu_state_bg = Rc::clone(&menu_state_for_keys);
                             let external_bg = Rc::clone(&external_plugins_for_keys);
+                            let plugins_bg = Rc::clone(&plugins_for_keys);
+                            let config_path_bg = config_path_for_keys.clone();
                             let window_bg = window_for_install;
                             cx.spawn(async move |cx| {
                                 // El trabajo pesado va al pool de hilos: clonar
@@ -291,7 +380,26 @@ fn run_terminal() {
                                         match install_res {
                                             Ok((manifest, start_res)) => match start_res {
                                                 Ok(plugin) => {
+                                                    let configs =
+                                                        read_external_configs(&config_path_bg);
+                                                    port_plugin_api::host::configure_externals(
+                                                        &[Arc::clone(&plugin)],
+                                                        &configs,
+                                                    );
+                                                    // Instalar deja el plugin
+                                                    // habilitado para el próximo
+                                                    // arranque.
+                                                    let _ =
+                                                        port_plugin_api::ConfigFile::set_enabled(
+                                                            &config_path_bg,
+                                                            &manifest.id,
+                                                            true,
+                                                        );
                                                     external_bg.borrow_mut().push(plugin);
+                                                    // Recién instalado y vivo:
+                                                    // su apariencia entra en la
+                                                    // composición de inmediato.
+                                                    refresh_externals(&plugins_bg, &external_bg);
                                                     s.add_or_update_external(ExternalPluginInfo {
                                                         id: manifest.id.clone(),
                                                         name: manifest.name.clone(),
@@ -469,6 +577,8 @@ fn run_terminal() {
 
         // Vigila el archivo de configuración y lo recarga en tiempo real ante cualquier cambio en disco.
         let plugins_for_watcher = Rc::clone(&plugins);
+        let external_plugins_for_watcher = Rc::clone(&external_plugins);
+        let config_path_for_watcher = config_path.clone();
         let window_for_watcher = window;
         cx.spawn(async move |cx| loop {
             cx.background_executor()
@@ -479,6 +589,13 @@ fn run_terminal() {
                 .reload_if_modified()
                 .unwrap_or(false);
             if reloaded {
+                // El archivo es compartido: al recargarlo también se reenvía
+                // su bloque a cada plugin externo.
+                let configs = read_external_configs(&config_path_for_watcher);
+                port_plugin_api::host::configure_externals(
+                    &external_plugins_for_watcher.borrow(),
+                    &configs,
+                );
                 window_for_watcher
                     .update(cx, |_, window, _cx| window.refresh())
                     .ok();
@@ -488,6 +605,33 @@ fn run_terminal() {
 
         cx.activate(true);
     });
+}
+
+/// Copia al registro la lista de externos vivos.
+///
+/// El registro es quien compone la apariencia de las dos fuentes, así que hay
+/// que avisarle en cada cambio de la lista: al arrancar, al encender o apagar
+/// un externo desde el menú y al instalar uno nuevo. Un solo punto de refresco
+/// evita que la vista y el registro discrepen.
+fn refresh_externals(
+    plugins: &Rc<RefCell<PluginRegistry>>,
+    externals: &Rc<RefCell<Vec<Arc<port_plugin_api::host::ExternalPlugin>>>>,
+) {
+    plugins
+        .borrow_mut()
+        .set_externals(externals.borrow().clone());
+}
+
+/// Lee los bloques del archivo de configuración, o un mapa vacío si aún no existe.
+///
+/// Se usa tanto al arrancar como en cada recarga/guardado para reenviar su
+/// bloque a cada plugin externo.
+fn read_external_configs(
+    path: &Path,
+) -> std::collections::BTreeMap<String, port_plugin_api::PluginConfig> {
+    std::fs::read_to_string(path)
+        .map(|text| port_plugin_api::ConfigFile::parse(&text))
+        .unwrap_or_default()
 }
 
 /// Comprueba si una pulsación de tecla coincide con una cadena de atajo (ej. "ctrl+shift+l").

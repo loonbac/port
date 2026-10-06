@@ -22,6 +22,8 @@ use port_term_core::frame::Rgb;
 use port_term_core::input::Key;
 use port_term_core::pty::{PtyConfig, RunningApp};
 
+use crate::host::ExternalPlugin;
+
 pub use config::{ConfigFile, PluginConfig};
 
 /// Argumento de una llamada entre plugins.
@@ -426,6 +428,16 @@ impl RegisteredPlugin {
 /// Registro central de plugins activos de la terminal.
 pub struct PluginRegistry {
     plugins: Vec<RegisteredPlugin>,
+    /// Externos vivos ahora mismo: procesos que hablaron el protocolo.
+    ///
+    /// El registro es el único lugar donde se combinan las dos fuentes de
+    /// apariencia (in-process y externos), para que la vista siga consultando
+    /// un solo objeto y no existan dos rutas de cálculo del mismo valor.
+    ///
+    /// La lista la refresca quien arranca y apaga los procesos
+    /// (`port-app`): aquí solo se guarda lo que hoy está en ejecución, y un
+    /// plugin apagado en el menú sale de la lista, con lo que deja de aportar.
+    externals: Vec<Arc<ExternalPlugin>>,
     hook_budget: Duration,
     config_path: RefCell<Option<PathBuf>>,
     last_modified: Cell<Option<SystemTime>>,
@@ -436,6 +448,7 @@ impl Default for PluginRegistry {
     fn default() -> Self {
         Self {
             plugins: Vec::new(),
+            externals: Vec::new(),
             hook_budget: DEFAULT_HOOK_BUDGET,
             config_path: RefCell::new(None),
             last_modified: Cell::new(None),
@@ -479,6 +492,16 @@ impl PluginRegistry {
     /// Configura el presupuesto de tiempo asignado a cada invocación de hook.
     pub fn set_hook_budget(&mut self, budget: Duration) {
         self.hook_budget = budget;
+    }
+
+    /// Sustituye la lista de plugins externos actualmente en ejecución.
+    ///
+    /// La llama `port-app` en cada cambio de la lista de vivos: al arrancar,
+    /// al encender o apagar un externo desde el menú y al instalar uno nuevo.
+    /// La apariencia de cada externo ya viene cacheada de su saludo, así que
+    /// esto solo copia punteros: no lanza procesos ni habla por la tubería.
+    pub fn set_externals(&mut self, externals: Vec<Arc<ExternalPlugin>>) {
+        self.externals = externals;
     }
 
     /// Consulta el estado de salud de un plugin por su identificador.
@@ -589,12 +612,24 @@ impl PluginRegistry {
     /// Atajo efectivo para abrir/cerrar el menú de plugins (por defecto "ctrl+shift+l").
     /// Calcula la opacidad efectiva combinando los plugins de apariencia activos.
     /// Si ningún plugin especifica opacidad, el valor por defecto es `1.0` (opaco).
+    ///
+    /// Fuentes: el registro in-process y los externos vivos (una lista que
+    /// mantiene al día quien arranca y apaga los procesos). Regla: gana la
+    /// opacidad **mínima** de todas, que es la que ya aplicaba solo entre
+    /// plugins in-process; un externo solo puede volver la ventana más
+    /// translúcida, nunca tapar el ajuste de otro. Un valor fuera de rango se
+    /// recorta a `0.0..=1.0`, igual que el in-process.
     pub fn effective_opacity(&self) -> f32 {
         let mut min_opacity = 1.0f32;
         for entry in &self.plugins {
             if let Some(op) = entry.invoke_hook(self.hook_budget, None, || {
                 entry.plugin.appearance_hook().and_then(|h| h.opacity())
             }) {
+                min_opacity = min_opacity.min(op.clamp(0.0, 1.0));
+            }
+        }
+        for external in &self.externals {
+            if let Some(op) = external.appearance().opacity {
                 min_opacity = min_opacity.min(op.clamp(0.0, 1.0));
             }
         }
@@ -615,18 +650,39 @@ impl PluginRegistry {
     }
 
     /// Obtiene la familia de fuente configurada por los plugins activos, o el valor por defecto.
+    ///
+    /// Orden de precedencia: primero el registro **in-process** y después los
+    /// externos vivos, en el orden en que están instalados. El in-process es la
+    /// configuración propia del núcleo (lo que PORT trae y controla); los
+    /// externos son añadidos instalados, así que no pueden pisarla. Gana el
+    /// primer valor no vacío, igual que antes; un externo sin familia cede ante
+    /// el siguiente.
     pub fn effective_font_family(&self, default: &str) -> String {
         for entry in &self.plugins {
             if let Some(family) = entry.invoke_hook(self.hook_budget, None, || {
                 entry.plugin.appearance_hook().and_then(|h| h.font_family())
             }) {
-                return family;
+                if !family.trim().is_empty() {
+                    return family;
+                }
+            }
+        }
+        for external in &self.externals {
+            if let Some(family) = external.appearance().font_family {
+                if !family.trim().is_empty() {
+                    return family;
+                }
             }
         }
         default.to_string()
     }
 
     /// Obtiene el tamaño de fuente configurado por los plugins activos, o el valor por defecto.
+    ///
+    /// Misma precedencia que [`PluginRegistry::effective_font_family`]: primero
+    /// el registro in-process —la configuración propia del núcleo— y después
+    /// los externos vivos, por orden de instalación. Gana el primer valor
+    /// presente.
     pub fn effective_font_size(&self, default: f32) -> f32 {
         for entry in &self.plugins {
             if let Some(size) = entry.invoke_hook(self.hook_budget, None, || {
@@ -635,10 +691,20 @@ impl PluginRegistry {
                 return size;
             }
         }
+        for external in &self.externals {
+            if let Some(size) = external.appearance().font_size {
+                return size;
+            }
+        }
         default
     }
 
     /// Fuentes de respaldo acumuladas de los plugins activos.
+    ///
+    /// Solo mira el registro in-process: el protocolo [`protocol::Appearance`]
+    /// que declaran los externos no lleva fallbacks (solo opacidad, familia,
+    /// tamaño y color de fondo), así que no hay nada que componer sin ampliar
+    /// el protocolo. Un externo no puede aportar respaldos hoy.
     pub fn effective_font_fallbacks(&self) -> Vec<String> {
         let mut fallbacks = Vec::new();
         for entry in &self.plugins {

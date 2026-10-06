@@ -256,6 +256,33 @@ impl ConfigFile {
         let updated = Self::update_or_append(&content, plugin_id, config);
         std::fs::write(path, updated)
     }
+
+    /// `true` si la configuración no deshabilita explícitamente el plugin.
+    ///
+    /// Un plugin instalado y nunca configurado no tiene bloque: se considera
+    /// habilitado, que es el comportamiento de siempre. Solo `enabled = false`
+    /// lo apaga.
+    pub fn is_enabled(configs: &BTreeMap<String, PluginConfig>, plugin_id: &str) -> bool {
+        configs
+            .get(plugin_id)
+            .and_then(|config| config.get_bool("enabled"))
+            .unwrap_or(true)
+    }
+
+    /// Persiste `enabled` en el bloque del plugin conservando el resto de claves.
+    ///
+    /// No basta con escribir un bloque nuevo con una sola clave: eso borraría
+    /// `opacity`, `family` y los demás ajustes del mismo plugin.
+    pub fn set_enabled(path: &Path, plugin_id: &str, enabled: bool) -> std::io::Result<()> {
+        let content = if path.exists() {
+            std::fs::read_to_string(path)?
+        } else {
+            String::new()
+        };
+        let mut block = Self::parse(&content).remove(plugin_id).unwrap_or_default();
+        block.set("enabled", enabled);
+        Self::save_plugin(path, plugin_id, &block)
+    }
 }
 
 #[cfg(test)]
@@ -332,5 +359,41 @@ default_size = 14
         let result = ConfigFile::update_or_append(initial, "font", &font_cfg);
         assert!(result.contains("```font-zoom\ndefault_size = 14\n```"));
         assert!(result.contains("```font\nfamily = JetBrainsMono\n```"));
+    }
+
+    #[test]
+    fn un_bloque_ausente_se_considera_habilitado() {
+        let configs = BTreeMap::new();
+        assert!(
+            ConfigFile::is_enabled(&configs, "font"),
+            "sin bloque el plugin está habilitado"
+        );
+    }
+
+    #[test]
+    fn el_estado_enabled_se_guarda_sin_perder_otras_claves() {
+        let dir = std::env::temp_dir().join(format!("port-config-enabled-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.md");
+        std::fs::write(&path, "```font\nfamily = JetBrainsMono\nsize = 16\n```\n").unwrap();
+
+        ConfigFile::set_enabled(&path, "font", false).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("enabled = false"));
+        assert!(
+            content.contains("family = JetBrainsMono") && content.contains("size = 16"),
+            "apagar no debe borrar el resto del bloque: {content}"
+        );
+        assert!(!ConfigFile::is_enabled(
+            &ConfigFile::parse(&content),
+            "font"
+        ));
+
+        ConfigFile::set_enabled(&path, "font", true).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(ConfigFile::is_enabled(&ConfigFile::parse(&content), "font"));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

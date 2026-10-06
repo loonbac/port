@@ -7,6 +7,7 @@
 
 use port_plugin_api::host;
 use port_plugin_api::install;
+use port_plugin_api::ConfigFile;
 
 /// Qué pidió la persona en la línea de comandos.
 #[derive(Debug)]
@@ -66,6 +67,9 @@ pub fn run(command: PluginCommand) -> i32 {
     match command {
         PluginCommand::Add { url } => match install::install(&url) {
             Ok(manifest) => {
+                // Instalar no apaga: el plugin queda habilitado para el próximo
+                // arranque, aunque antes se hubiera desactivado desde el menú.
+                let _ = ConfigFile::set_enabled(&ConfigFile::default_path(), &manifest.id, true);
                 println!("instalado {} {}", manifest.name, manifest.version);
                 println!("  ejecutable: {}", manifest.executable);
                 println!("  reinicia PORT para cargarlo");
