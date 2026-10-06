@@ -35,6 +35,48 @@ pub fn edit_action(key: &Key) -> Option<EditAction> {
     }
 }
 
+/// Comprueba si una pulsación de tecla coincide con una cadena de atajo (ej. "ctrl+shift+l").
+pub(crate) fn matches_shortcut(key: &Key, pattern: &str) -> bool {
+    let parts: Vec<&str> = pattern.split('+').map(str::trim).collect();
+    if parts.is_empty() {
+        return false;
+    }
+    let mut ctrl = false;
+    let mut alt = false;
+    let mut shift = false;
+    let mut target_key = "";
+
+    for (i, part) in parts.iter().enumerate() {
+        let lower = part.to_lowercase();
+        if i == parts.len() - 1 {
+            target_key = part;
+        } else {
+            match lower.as_str() {
+                "ctrl" | "control" => ctrl = true,
+                "alt" => alt = true,
+                "shift" => shift = true,
+                _ => return false,
+            }
+        }
+    }
+
+    if key.ctrl != ctrl || key.alt != alt || key.shift != shift {
+        return false;
+    }
+
+    let k_lower = key.key.to_lowercase();
+    let target_lower = target_key.to_lowercase();
+    if k_lower == target_lower {
+        return true;
+    }
+    if let Some(text) = &key.text {
+        if text.to_lowercase() == target_lower {
+            return true;
+        }
+    }
+    false
+}
+
 /// Convierte una pulsación en la tecla que entiende el núcleo.
 ///
 /// Devuelve `None` solo si no hay nada que codificar (por ejemplo, pulsar una

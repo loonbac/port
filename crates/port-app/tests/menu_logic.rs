@@ -1,4 +1,4 @@
-#[path = "../src/menu.rs"]
+#[path = "../src/menu/mod.rs"]
 mod menu;
 
 use menu::{ExternalPluginInfo, MenuAction, MenuMode, MenuState};
