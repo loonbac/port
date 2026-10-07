@@ -89,19 +89,22 @@ jobs:
       - name: Test
         run: nix develop --command cargo test --workspace --locked
 
+      # `id: meta` hace falta: el job declara su salida como
+      # `steps.meta.outputs.version`. Sin el id la salida quedaba vacia.
       - name: Preparar dist
+        id: meta
         run: |
           set -eu
           mkdir -p dist
           cp result/bin/${{ env.BIN }} dist/
           # El tag manda: es lo que el usuario acaba de publicar. Si no hay tag todavia
-            # (por ejemplo en una ejecucion manual), se recurre a Cargo.toml, que es la
-            # fuente unica de la version del proyecto.
-            VERSION="$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)"
-            if [ -z "$VERSION" ]; then
-              VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
-            fi
-            echo "VERSION=$VERSION"
+          # (por ejemplo en una ejecucion manual), se recurre a Cargo.toml, que es la
+          # fuente unica de la version del proyecto.
+          VERSION="$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)"
+          if [ -z "$VERSION" ]; then
+            VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
+          fi
+          echo "VERSION=$VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Subir binario
@@ -142,11 +145,22 @@ jobs:
           ./scripts/package.sh deb
           ./scripts/package.sh rpm
 
+      # Esta comprobacion replica la verificacion local que precede a cualquier
+      # cambio de release: `./scripts/build-portable.sh` + arranque del bundle +
+      # presencia del .desktop y de los iconos. El paso de arranque importa:
+      # el fallo que bloqueo todas las releases (bundle.sh con `$ROOT` sin
+      # definir) ocurria JUSTO DESPUES de que el binario arrancara, al copiar
+      # iconos, y aqui no se ejecutaba nada, asi que el job se veia roto sin
+      # mas.
       - name: Comprobar el bundle
         run: |
           set -eu
           BUNDLE="$(echo dist/port-*-linux-x86_64)"
           echo "Bundle: $BUNDLE"
+          if [ ! -x "$BUNDLE/bin/port" ]; then
+            echo "::error::ejecutable bin/port no encontrado en $BUNDLE"
+            exit 1
+          fi
           # El intérprete no debe apuntar al store: es lo que hace portable
           # al binario fuera de Nix.
           interp="$(readelf -l "$BUNDLE/bin/port" | sed -n 's/.*interpreter: \(.*\)\]/\1/p')"
@@ -154,6 +168,23 @@ jobs:
             /nix/store/*) echo "::error::el intérprete sigue en el store"; exit 1 ;;
           esac
           echo "Intérprete: $interp"
+
+          # El binario debe arrancar de verdad, no solo estar bien formado.
+          "$BUNDLE/bin/port" --help | head -3
+
+          # Y el bundle debe traer el .desktop y los iconos que bundle.sh
+          # instala al final. Comprobarlos aqui hace visible al instante una
+          # rotura de ese paso, en vez de publicar un bundle incompleto.
+          for f in \
+            share/applications/port.desktop \
+            share/icons/hicolor/256x256/apps/port-terminal.png \
+            share/pixmaps/port-terminal.png; do
+            if [ ! -e "$BUNDLE/$f" ]; then
+              echo "::error::falta $f dentro del bundle"
+              exit 1
+            fi
+          done
+          echo "Desktop e iconos presentes"
 
       - name: Subir artefactos
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6

@@ -19,6 +19,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/version.sh"
 VERSION="$PORT_VERSION"
 BIN="port"
 DIST="dist"
+# Raiz del repositorio, calculada desde la ubicacion del propio script. Sin
+# esto, `set -u` abortaba en las lineas de iconos/desktop con
+# "ROOT: unbound variable" y el job portable de Actions nunca llegaba a
+# publicar (release.yml: publish needs [linux-binary, portable, packages]).
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUNDLE="$DIST/$BIN-$VERSION-linux-x86_64"
 
 die() { echo "error: $*" >&2; exit 1; }

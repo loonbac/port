@@ -130,6 +130,22 @@ jobs:
           echo "Librerias empaquetadas en lib/:"
           ls -la "$BUNDLE/lib"
 
+          # El .desktop y los iconos que bundle.sh instala al final del
+          # empaquetado. Es el ultimo paso del script y el que rompio la cadena
+          # de release entera cuando `$ROOT` quedo sin definir: sin estas
+          # lineas de comprobacion la rotura solo se veia en el arranque del
+          # bundle y, si este paso no lo ejecutaba, ni siquiera ahi.
+          for f in \
+            share/applications/port.desktop \
+            share/icons/hicolor/256x256/apps/port-terminal.png \
+            share/pixmaps/port-terminal.png; do
+            if [ ! -e "$BUNDLE/$f" ]; then
+              echo "::error::falta $f dentro del bundle"
+              exit 1
+            fi
+          done
+          echo "Desktop e iconos presentes"
+
       # ── ¿Arranca de verdad? ────────────────────────────────────────────────
       # Hasta aqui solo se comprobaba que el bundle ESTA bien formado: que el
       # interprete no es del store y que las librerias resuelven. Eso es
