@@ -13,8 +13,6 @@ mod view;
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
-use std::time::Duration;
 
 use gpui::prelude::*;
 use gpui::{
@@ -26,8 +24,8 @@ use port_plugin_selection::SelectionPlugin;
 use port_term_core::pty::PtyConfig;
 use port_term_core::session::SessionManager;
 
-use crate::app::plugins::{apply_mouse_policy, read_external_configs};
-use crate::menu::{ExternalPluginInfo, MenuState};
+use crate::app::plugins::apply_mouse_policy;
+use crate::menu::MenuState;
 use crate::metrics::Metrics;
 use crate::view::{ClosePromptState, TerminalView};
 
@@ -63,71 +61,9 @@ fn run_terminal() {
         plugin_registry.register(SelectionPlugin::new());
         let close_prompt = Rc::new(RefCell::new(ClosePromptState::default()));
 
-        // La configuración se carga ANTES de arrancar externos: el `enabled`
-        // persistido decide quién arranca. `load_or_create_default_config`
-        // crea el archivo con los defaults de los plugins en proceso.
-        let config_path = plugin_registry
-            .load_or_create_default_config()
-            .unwrap_or_else(|_| port_plugin_api::ConfigFile::default_path());
-        let external_configs = read_external_configs(&config_path);
-
-        // Plugins externos instalados con `port plugin add` o desde el menú.
-        // Se cargan y arrancan sin bloquear el inicio si alguno falla.
-        let installed = port_plugin_api::host::installed();
-        let mut running_external: Vec<Arc<port_plugin_api::host::ExternalPlugin>> = Vec::new();
-        let mut external_infos: Vec<ExternalPluginInfo> = Vec::new();
-
-        for manifest in
-            port_plugin_api::host::enabled_manifests(installed.clone(), &external_configs)
-        {
-            match port_plugin_api::host::ExternalPlugin::start(manifest.clone()) {
-                Ok(plugin) => {
-                    // El bloque del plugin llega una vez arrancado, igual que
-                    // en cada recarga del archivo de configuración.
-                    port_plugin_api::host::configure_externals(
-                        &[Arc::clone(&plugin)],
-                        &external_configs,
-                    );
-                    running_external.push(plugin);
-                    external_infos.push(ExternalPluginInfo {
-                        id: manifest.id,
-                        name: manifest.name,
-                        version: manifest.version,
-                        enabled: true,
-                        running: true,
-                    });
-                }
-                Err(e) => {
-                    eprintln!("plugin no cargado: {e}");
-                    external_infos.push(ExternalPluginInfo {
-                        id: manifest.id,
-                        name: manifest.name,
-                        version: manifest.version,
-                        // La configuración lo deja habilitado, pero el
-                        // proceso no arrancó: el menú refleja ambas cosas.
-                        enabled: true,
-                        running: false,
-                    });
-                }
-            }
-        }
-
-        // Los apagados por configuración se listan igual, para poder encenderlos.
-        for manifest in installed {
-            if external_infos.iter().any(|info| info.id == manifest.id) {
-                continue;
-            }
-            external_infos.push(ExternalPluginInfo {
-                id: manifest.id,
-                name: manifest.name,
-                version: manifest.version,
-                enabled: false,
-                running: false,
-            });
-        }
-        if !running_external.is_empty() {
-            eprintln!("{} plugin(s) externo(s) cargados", running_external.len());
-        }
+        let (config_path, external_configs) = app::bootstrap::load_config(&mut plugin_registry);
+        let (running_external, external_infos) =
+            app::bootstrap::start_external_plugins(&external_configs);
 
         // El registro compone la apariencia de ambas fuentes, así que recibe la
         // lista de externos vivos antes de calcular el tamaño inicial: un
@@ -249,96 +185,16 @@ fn run_terminal() {
             });
         });
 
-        // Latido reactivo: redibuja cuando el PTY tiene datos nuevos, cuando el
-        // directorio de trabajo cambia (cd) o cuando cambia el programa en primer plano.
-        let session_for_poller = Rc::clone(&session_manager);
-        let plugins_for_poller = Rc::clone(&plugins);
-        let window_for_poller = window;
-        let mut last_cwd = None;
-        let mut last_app = None;
-        cx.spawn(async move |cx| {
-            loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(16))
-                    .await;
-                let (changed, cwd, app, exited, empty) = {
-                    let mut mgr = session_for_poller.borrow_mut();
-                    let c = mgr.pump();
-                    // Se recogen los shells terminados aquí, y no en el
-                    // render: si un shell muere sin escribir nada, nunca
-                    // habria un redibujado y la ventana se quedaria pegada.
-                    let exited = mgr.reap_exited();
-                    let empty = mgr.is_empty();
-                    (c, mgr.active_cwd(), mgr.active_app(), exited, empty)
-                };
+        app::bootstrap::spawn_poller(cx, &session_manager, &plugins, window);
 
-                if !exited.is_empty() {
-                    for id in &exited {
-                        plugins_for_poller.borrow().on_session_closed(*id);
-                    }
-                }
-
-                // Sin sesiones no hay terminal que mostrar: se cierra la ventana.
-                if empty {
-                    window_for_poller
-                        .update(cx, |_, window, _cx| {
-                            window.remove_window();
-                        })
-                        .ok();
-                    break;
-                }
-
-                let cwd_changed = cwd != last_cwd;
-                if cwd_changed {
-                    last_cwd = cwd;
-                }
-                let app_changed = app != last_app;
-                if app_changed {
-                    last_app = app;
-                }
-                if changed || cwd_changed || app_changed || !exited.is_empty() {
-                    window_for_poller
-                        .update(cx, |_, window, _cx| window.refresh())
-                        .ok();
-                }
-            }
-        })
-        .detach();
-
-        // Vigila el archivo de configuración y lo recarga en tiempo real ante cualquier cambio en disco.
-        let plugins_for_watcher = Rc::clone(&plugins);
-        let external_plugins_for_watcher = Rc::clone(&external_plugins);
-        let session_for_watcher = Rc::clone(&session_manager);
-        let config_path_for_watcher = config_path.clone();
-        let window_for_watcher = window;
-        cx.spawn(async move |cx| loop {
-            cx.background_executor()
-                .timer(Duration::from_millis(150))
-                .await;
-            let reloaded = plugins_for_watcher
-                .borrow_mut()
-                .reload_if_modified()
-                .unwrap_or(false);
-            if reloaded {
-                // El archivo es compartido: al recargarlo también se reenvía
-                // su bloque a cada plugin externo.
-                let configs = read_external_configs(&config_path_for_watcher);
-                port_plugin_api::host::configure_externals(
-                    &external_plugins_for_watcher.borrow(),
-                    &configs,
-                );
-                // Recargar el archivo cambia el registro: la política vigente
-                // se reaplica a las sesiones vivas.
-                apply_mouse_policy(
-                    &mut session_for_watcher.borrow_mut(),
-                    &plugins_for_watcher.borrow(),
-                );
-                window_for_watcher
-                    .update(cx, |_, window, _cx| window.refresh())
-                    .ok();
-            }
-        })
-        .detach();
+        app::bootstrap::spawn_config_watcher(
+            cx,
+            &session_manager,
+            &plugins,
+            &external_plugins,
+            &config_path,
+            window,
+        );
 
         cx.activate(true);
     });

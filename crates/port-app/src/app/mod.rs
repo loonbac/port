@@ -3,6 +3,7 @@
 //! El arranque (`main.rs`) queda con la ventana y su bucle de eventos; lo que
 //! tiene contrato propio vive aquí.
 
+pub mod bootstrap;
 pub mod input;
 pub mod menu_actions;
 pub mod plugins;
