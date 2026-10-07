@@ -144,7 +144,6 @@ jobs:
           set -eu
           ./scripts/package.sh deb
           ./scripts/package.sh rpm
-
       # Esta comprobacion replica la verificacion local que precede a cualquier
       # cambio de release: `./scripts/build-portable.sh` + arranque del bundle +
       # presencia del .desktop y de los iconos. El paso de arranque importa:
@@ -186,6 +185,24 @@ jobs:
           done
           echo "Desktop e iconos presentes"
 
+      # El README promete `port-*.tar.gz` como instalacion recomendada, y
+      # hasta ahora NINGUN workflow creaba ese tar.gz: la release no podia
+      # cumplir su propia documentacion. Se crea aqui, con la misma fuente de
+      # version que bundle.sh (version.sh -> Cargo.toml), justo despues de la
+      # verificacion y antes de subir el artefacto.
+      - name: Empaquetar bundle en tar.gz
+        run: |
+          set -eu
+          # shellcheck source=scripts/version.sh
+          source scripts/version.sh
+          TARBALL="port-$PORT_VERSION-linux-x86_64.tar.gz"
+          # El -f se abre desde el cwd del proceso, no desde -C: primero se
+          # crea en el cwd y despues se mueve a dist/ para no dejar el tar
+          # dentro de si mismo.
+          tar -czf "$TARBALL" -C dist "port-$PORT_VERSION-linux-x86_64"
+          mv "$TARBALL" "dist/$TARBALL"
+          ls -la "dist/$TARBALL"
+
       - name: Subir artefactos
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
@@ -193,59 +210,10 @@ jobs:
           path: dist/
           if-no-files-found: error
 
-  packages:
-    name: packages / ${{ matrix.package }}
-    runs-on: ubuntu-24.04
-    needs: linux-binary
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        # dpkg-deb y rpmbuild no están en los runners; el script genera el .deb
-        # a mano con `ar` y el .spec para empaquetado externo.
-        package: [deb, spec]
-
-    steps:
-      # Hace falta el repositorio: el job ejecuta scripts/package.sh, que no
-      # viaja en el artefacto del binario. Sin este checkout el script no
-      # existe y el job muere con "No such file or directory".
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-
-      - name: Descargar binario
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
-        with:
-          name: release-binary
-          path: result/bin
-
-      - name: Empaquetar
-        env:
-          PKG: ${{ matrix.package }}
-        run: |
-          set -eu
-          # El .deb se construye sin dpkg-deb: es un `ar` con tres entradas.
-          if [ "$PKG" = "deb" ]; then
-            ./scripts/package.sh deb
-          else
-            ./scripts/package.sh rpm
-          fi
-          ls -la dist/ || true
-
-      - name: Subir paquetes
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
-        with:
-          name: release-${{ matrix.package }}
-          path: dist/
-          if-no-files-found: warn
-
   publish:
     name: publicar release
     runs-on: ubuntu-24.04
-    needs: [linux-binary, portable, packages]
+    needs: [linux-binary, portable]
     if: startsWith(github.ref, 'refs/tags/')
     timeout-minutes: 20
     # Único job con permiso de escritura.
@@ -253,6 +221,13 @@ jobs:
       contents: write
 
     steps:
+      # El paso de publicacion lee la version de Cargo.toml (fuente unica de
+      # la version); sin este checkout no existiria y el job moriria ahi.
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
       - name: Recolectar artefactos
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
         with:
@@ -265,30 +240,53 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          FILES="$(find dist -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.spec' -o -name 'port' \) | tr '\n' ' ')"
+          # Seleccion EXPLICITA de assets, nunca un find generico sobre todo
+          # dist/. Antes el find -name 'port' cazaba tambien
+          # deb-root/usr/bin/port y el binario del bundle: dos ficheros con el
+          # mismo nombre 'port' en la misma release, y `gh` rechaza assets
+          # duplicados. Ademas faltaba el tar.gz que promete el README.
+          VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
+          FILES=""
+          for f in \
+            "dist/port-$VERSION-linux-x86_64.tar.gz" \
+            "dist/port-$VERSION.deb" \
+            "dist/port.spec"; do
+            if [ -f "$f" ]; then
+              FILES="$FILES $f"
+            else
+              echo "::warning::no se encuentra $f (se publica sin el)"
+            fi
+          done
+          FILES="${FILES# }"
           if [ -z "$FILES" ]; then
             echo "no hay artefactos que publicar" >&2
             exit 1
           fi
+          echo "Publicando:$FILES"
           gh release create "${GITHUB_REF_NAME}" $FILES \
             --title "PORT ${GITHUB_REF_NAME}" \
             --generate-notes \
             --notes "$(cat <<'NOTES'
-            ## Instalar
+          ## Instalar
 
-            **Nix** (cualquier distro de Linux, macOS o Windows con Nix):
-            ```bash
-            nix profile install github:loonbac/port
-            port
-            ```
+          **Bundle portable (recomendado)**:
+          ```bash
+          tar xf port-*.tar.gz
+          ./port-*/bin/port
+          ```
 
-            **Paquete nativo**:
-            - Debian/Ubuntu: `sudo apt install ./port.deb`
-            - Fedora/RHEL: `sudo dnf install ./port.rpm`
+          **Paquete nativo**:
+          - Debian/Ubuntu: `sudo apt install ./port-<version>.deb`
 
-            ## Configuración
+          **Nix** (cualquier distro de Linux, macOS o Windows con Nix):
+          ```bash
+          nix profile install github:loonbac/port
+          port
+          ```
 
-            El primer arranque crea `~/.config/port/config.md`. Cada plugin
-            tiene su propio bloque y el archivo se recarga al guardarlo.
-            NOTES
-            )"
+          ## Configuracion
+
+          El primer arranque crea `~/.config/port/config.md`. Cada plugin
+          tiene su propio bloque y el archivo se recarga al guardarlo.
+          NOTES
+          )"

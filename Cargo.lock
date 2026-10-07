@@ -3858,7 +3858,7 @@ checksum = "5da3b0203fd7ee5720aa0b5e790b591aa5d3f41c3ed2c34a3a393382198af2f7"
 
 [[package]]
 name = "port"
-version = "0.1.2"
+version = "0.1.6"
 dependencies = [
  "gpui",
  "port-plugin-api",
@@ -3869,7 +3869,7 @@ dependencies = [
 
 [[package]]
 name = "port-plugin-api"
-version = "0.1.2"
+version = "0.1.6"
 dependencies = [
  "gpui",
  "port-plugin-sdk",
@@ -3892,7 +3892,7 @@ dependencies = [
 
 [[package]]
 name = "port-plugin-sdk"
-version = "0.1.2"
+version = "0.1.6"
 dependencies = [
  "serde",
  "serde_json",
@@ -3909,7 +3909,7 @@ dependencies = [
 
 [[package]]
 name = "port-term-core"
-version = "0.1.2"
+version = "0.1.6"
 dependencies = [
  "alacritty_terminal",
  "libc",
