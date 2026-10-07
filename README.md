@@ -94,40 +94,24 @@ opacity and which plugins are enabled.
 
 ## Installation
 
-### Portable bundle (recommended)
+### Native packages (recommended)
 
-No Nix, no packages to install. Download the `port-<version>-linux-x86_64`
-directory from the release, unpack it anywhere and run `bin/port`:
-
-```bash
-tar xf port-*.tar.gz
-./port-*/bin/port
-```
-
-To install it under `~/.local`:
-
-```bash
-./port-*/INSTALL.sh
-```
-
-The bundle ships the X11/xkb libraries that GPUI links against, plus the
-Wayland and Vulkan loaders, all inside `lib/`. FreeType is **not** bundled:
-GPUI opens it with `dlopen` at runtime, so it is resolved from the host system
-like the Vulkan driver. The one thing it
-cannot ship is your GPU driver: Vulkan has to find the ICD that matches your
-card, and that is a property of the machine, not of the terminal.
-
-Only the driver needs to be present. The rest travels with the app.
-
-### Native packages
+Download the `.deb` or `.rpm` from the
+[GitHub releases page](https://github.com/loonbac/port/releases) and install it
+like any other terminal:
 
 ```bash
 # Debian / Ubuntu
-sudo apt install ./port.deb
+sudo apt install ./port-<version>.deb
 
 # Fedora / RHEL
-sudo dnf install ./port.rpm
+sudo dnf install ./port-<version>.rpm
 ```
+
+The packages install the binary in `/usr/bin` and the `.desktop` entry and icon
+in the system paths, so PORT shows up in your applications menu. They are built
+inside Debian 12 against glibc 2.36, which is why they run on Ubuntu 22.04 or
+later, Fedora 36 or later, and RHEL/Rocky 9.
 
 ### Nix (optional)
 
@@ -137,9 +121,7 @@ nix profile install github:loonbac/port
 
 Useful on NixOS, and for reproducible builds. It is **not** required: a binary
 built through Nix carries the store's dynamic loader inside it, so it runs on
-NixOS and nowhere else. The portable bundle is built inside Debian 12 against
-glibc 2.36 instead, which is why it runs on Ubuntu 22.04 and later, Fedora 36
-and later, and RHEL/Rocky 9.
+NixOS and nowhere else.
 
 ### Requirements
 

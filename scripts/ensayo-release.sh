@@ -1,29 +1,54 @@
 #!/usr/bin/env bash
-# Ensayo LOCAL de la cadena completa de release, con contenedor real.
-# Es lo que evita gastar 30 minutos por iteracion en GitHub.
+# Ensayo LOCAL de la cadena completa de release, con contenedores reales.
+#
+# Replica lo que hace `.github/workflows/release.yml` pero en esta maquina: es
+# lo que evita gastar 30 minutos por iteracion en GitHub. Compila el binario de
+# release, genera el .deb y el .rpm y comprueba que se instalan limpios en
+# Debian 12, Ubuntu 22.04 y Fedora.
 set -euo pipefail
-cd /home/loonbac/Proyectos/port
 
-echo "=== 1. nix build ==="
-out="$(nix build .#port --no-link --print-out-paths 2>/dev/null | tail -1)"
-echo "   $out"
+SELF="$(readlink -f "$0")"
 
-echo "=== 2. build-portable.sh (contenedor real) ==="
-./scripts/build-portable.sh 2>&1 | tail -6
+docker_ok() { command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; }
 
-VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
-echo "=== 3. el bundle ARRANCA? ==="
-./"dist/port-$VERSION-linux-x86_64/bin/port" --help | head -2
+# La sesion de login de esta maquina es anterior a la incorporacion al grupo
+# docker, asi que los shells normales no tienen acceso al socket. Si `docker
+# info` falla pero `sg docker -c 'docker info'` funciona, se re-lanza el script
+# entero bajo `sg docker`. Sin esto, cada paso moria en el primer `docker run`
+# con "permission denied ... docker.sock".
+if ! docker_ok; then
+  if command -v sg >/dev/null 2>&1 && sg docker -c 'docker info' >/dev/null 2>&1; then
+    echo "==> docker sin acceso directo; re-lanzando bajo 'sg docker'"
+    exec sg docker -c "bash $(printf '%q' "$SELF")"
+  fi
+fi
 
-echo "=== 4. package.sh deb ==="
-bash scripts/package.sh deb 2>&1 | tail -2
-echo "=== 5. package.sh spec ==="
-bash scripts/package.sh spec 2>&1 | tail -2
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+# shellcheck source=scripts/version.sh
+source "$ROOT/scripts/version.sh"
+VERSION="$PORT_VERSION"
 
-echo "=== 6. nada se borro por el camino ==="
-for f in "port-$VERSION.deb" "port.spec" "port-$VERSION-linux-x86_64/bin/port"; do
-  [ -e "dist/$f" ] || { echo "FALLO: falta dist/$f"; exit 1; }
+echo "=== 1. build-portable.sh (binario de release, contenedor real) ==="
+./scripts/build-portable.sh
+
+echo "=== 2. package.sh deb ==="
+./scripts/package.sh deb
+
+echo "=== 3. package.sh rpm ==="
+./scripts/package.sh rpm
+
+echo "=== 4. test-install.sh deb (Debian 12 + Ubuntu 22.04) ==="
+./scripts/test-install.sh deb
+
+echo "=== 5. test-install.sh rpm (Fedora) ==="
+./scripts/test-install.sh rpm
+
+echo "=== 6. los paquetes existen con el nombre versionado ==="
+for f in "dist/port-$VERSION.deb" "dist/port-$VERSION.rpm"; do
+  [ -e "$f" ] || { echo "FALLO: falta $f"; exit 1; }
 done
+
 echo
 echo "dist/:"; ls -1 dist/
 echo; echo "ENSAYO LOCAL COMPLETO: OK"

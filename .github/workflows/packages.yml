@@ -1,0 +1,108 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Validación continua de los paquetes nativos
+#
+# Relación con `.github/workflows/release.yml`:
+#
+# `release.yml` incluye su propio job `native-packages` que genera y prueba los
+# paquetes (.deb y .rpm) únicamente cuando se publica una etiqueta de versión
+# (`tags: ['v*']`). Ese proceso es el que firma y publica los paquetes
+# definitivos de una release.
+#
+# Por qué existe este workflow independiente:
+#
+# `build-portable.sh`, `package.sh` y `test-install.sh` compilan dentro de
+# contenedores Docker contra Debian 12 (glibc 2.36) y prueban la instalación en
+# Debian 12, Ubuntu 22.04 y Fedora. Es un proceso pesado y lento comparado con
+# el resto de jobs de `ci.yml`; si corriera en cada commit de cada PR saturaría
+# los minutos de CI innecesariamente.
+#
+# Este workflow actúa como red de seguridad preventiva:
+# 1. Se ejecuta periódicamente (semanal) y bajo demanda (`workflow_dispatch`).
+# 2. Se ejecuta en `push` a `master` ÚNICAMENTE si se tocan archivos que afectan
+#    al empaquetado o al código fuente (`scripts/**`, `flake.nix`, `Cargo.*`,
+#    `crates/**`).
+#
+# Así detectamos roturas de los paquetes nativos antes de intentar publicar una
+# release formal, sin duplicar la lógica de publicación ni ralentizar el CI diario.
+#
+# No hay matriz de distros a propósito: `scripts/test-install.sh` itera Debian
+# 12, Ubuntu 22.04 y Fedora dentro de sí mismo, así que el job es uno solo.
+#
+# Hardening:
+#  - Acciones fijadas a SHA completo con comentario de versión.
+#  - Permisos mínimos: `permissions: contents: read` (no publica nada).
+#  - Nunca usa `pull_request_target`.
+#  - `persist-credentials: false` en checkout.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Native Packages
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'scripts/**'
+      - 'flake.nix'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/**'
+  schedule:
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-packages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-packages:
+    name: build and install native packages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      # El workspace trae parches a rutas locales (`../port-plugins/...`) para
+      # desarrollar sin publicar. Ese repositorio hermano no existe en el runner,
+      # así que se retiran antes de resolver dependencias.
+      - name: Retirar parches locales
+        run: ./scripts/disable-local-patch.sh
+
+      # Docker viene preinstalado en los runners de Ubuntu, así que el binario
+      # se compila igual con independencia del toolchain del sistema anfitrión.
+      - name: Compilar binario de release
+        run: ./scripts/build-portable.sh
+
+      - name: Generar paquetes nativos
+        run: |
+          set -eu
+          ./scripts/package.sh deb
+          ./scripts/package.sh rpm
+
+      # Este paso instala los paquetes DE VERDAD en Debian 12, Ubuntu 22.04 y
+      # Fedora, y comprueba que la terminal arranca y resuelve sus librerías:
+      # es lo que convierte una build verde en una release que se puede
+      # publicar.
+      - name: Probar instalación en el sistema
+        run: |
+          ./scripts/test-install.sh deb
+          ./scripts/test-install.sh rpm
+
+      - name: Subir paquetes
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: native-packages
+          path: |
+            dist/*.deb
+            dist/*.rpm
+          if-no-files-found: error
+          retention-days: 7

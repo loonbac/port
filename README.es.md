@@ -100,42 +100,24 @@ incluyendo tamaño de fuente, opacidad y qué plugins están activos.
 
 ## Instalación
 
-### Bundle portable (recomendado)
+### Paquetes nativos (recomendado)
 
-Sin Nix y sin instalar paquetes. Descarga el directorio
-`port-<version>-linux-x86_64` de la release, descomprímelo donde quieras y
-ejecuta `bin/port`:
-
-```bash
-tar xf port-*.tar.gz
-./port-*/bin/port
-```
-
-Para instalarlo en `~/.local`:
-
-```bash
-./port-*/INSTALL.sh
-```
-
-El bundle incluye las librerías de X11/xkb contra las que GPUI enlaza, y carga
-Wayland y Vulkan en tiempo de ejecución, todo dentro de `lib/`. **FreeType no
-se empaqueta**: GPUI la abre con `dlopen` en tiempo de ejecución, así que se
-resuelve desde el sistema anfitrión igual que el driver de Vulkan. Lo
-único que no puede empaquetar es tu driver de GPU: Vulkan tiene que encontrar el
-ICD que corresponde a tu tarjeta, y eso es una propiedad de la máquina, no de la
-terminal.
-
-Solo el driver tiene que estar presente. Lo demás viaja con la aplicación.
-
-### Paquetes nativos
+Descarga el `.deb` o el `.rpm` desde la
+[página de releases de GitHub](https://github.com/loonbac/port/releases) e
+instálalo como cualquier otra terminal:
 
 ```bash
 # Debian / Ubuntu
-sudo apt install ./port.deb
+sudo apt install ./port-<version>.deb
 
 # Fedora / RHEL
-sudo dnf install ./port.rpm
+sudo dnf install ./port-<version>.rpm
 ```
+
+Los paquetes instalan el binario en `/usr/bin` y la entrada `.desktop` y el
+icono en las rutas del sistema, así que PORT aparece en el menú de
+aplicaciones. Se compilan dentro de Debian 12 contra glibc 2.36, y por eso
+funcionan en Ubuntu 22.04 o posterior, Fedora 36 o posterior y RHEL/Rocky 9.
 
 ### Nix (opcional)
 
@@ -145,9 +127,7 @@ nix profile install github:loonbac/port
 
 Útil en NixOS y para compilaciones reproducibles. **No** es obligatorio: un
 binario compilado con Nix lleva dentro el cargador dinámico del store, así que
-funciona en NixOS y en ningún otro sitio. El bundle portable se compila dentro de
-Debian 12 contra glibc 2.36, y por eso arranca en Ubuntu 22.04 o posterior,
-Fedora 36 o posterior y RHEL/Rocky 9.
+funciona en NixOS y en ningún otro sitio.
 
 ### Requisitos
 

@@ -1,20 +1,30 @@
 #!/usr/bin/env bash
-# Compila PORT contra el glibc del sistema y produce un bundle portable.
+# Compila el binario de release de PORT contra un glibc antiguo.
 #
-# Por qué esto existe en vez de usar el binario de Nix: un binario enlazado por
+# Antes este script producia ademas un bundle portable autocontenido (un
+# directorio con INSTALL.sh y las librerias al lado del binario). Ese formato se
+# retiro por decision del usuario: PORT se instala como cualquier terminal, con
+# el paquete nativo de la distribucion (.deb / .rpm), que deja el binario en
+# /usr/bin y el .desktop y el icono en las rutas del sistema. El nombre del
+# fichero se conserva porque sigue significando lo mismo: produce un binario
+# "portable" en el sentido de que solo depende del glibc del sistema.
+#
+# Es el binario que consumen scripts/package.sh (ramas deb/rpm) y que prueba
+# scripts/test-install.sh. Por que no se usa el de Nix: un binario enlazado por
 # Nix lleva el intérprete del store grabado dentro
-# (/nix/store/.../ld-linux-x86-64.so.2). Ese binario funciona dentro de Nix y en
-# ningún otro sitio, por muy autocontenido que parezca el directorio lib/.
+# (/nix/store/.../ld-linux-x86-64.so.2), y ese binario funciona dentro de Nix y
+# en ningún otro sitio.
 #
-# Para que el binario corra en la mayor parte de distribuciones hay dos reglas:
+# Para que corra en la mayor parte de distribuciones hay dos reglas:
 #
 #  1. Enlazar contra el glibc MAS ANTIGUO que se quiera soportar, nunca contra
 #     el del sistema que compila. Por eso se compila en Debian 12 (glibc 2.36) en
 #     vez de en la máquina del desarrollador, que puede tener 2.42 y no arrancar
-#     en Ubuntu 22.04.
-#  2. Empaquetar las librerías de GPU/X11 al lado del binario con RUNPATH
-#     relativo, porque GPUI las carga por dlopen y sus nombres de soname
-#     varían entre distribuciones.
+#     en Ubuntu 22.04. De ahi que los paquetes corran en Ubuntu 22.04+ y
+#     Fedora 36+.
+#  2. Dejar el binario sin dependencias del store y sin RUNPATH raro: las
+#     librerias de X11/xkb/Wayland/Vulkan las aporta el sistema, y por eso
+#     `package.sh` las declara como Depends/Requires.
 #
 # Requisitos: docker (o podman) y, solo si no hay docker, las librerías de
 # desarrollo en el sistema.
@@ -102,24 +112,12 @@ case "$interp" in
 esac
 echo "==> Interprete: $interp"
 
-# El empaquetado corre DENTRO del contenedor, y no por gusto: las librerias
-# que hay que empaquetar se instalaron aqui con apt. En el host (el runner de
-# Ubuntu) no estan, y el fallo aparecia como "no encuentro libxcb-xkb.so.1"
-# dos pasos mas tarde, muy lejos de su causa: libxcb.so.1 si esta en Ubuntu
-# por casualidad, asi que una se copiaba y la otra no, y parecian un problema
-# de nombres en vez de de sitio.
-# Con `bash` explicito: `/bin/sh` en Debian es dash y no conoce `pipefail`,
-  # que bundle.sh necesita. Es el mismo motivo por el que el job de CI declara
-  # `shell: bash`.
-  echo "==> Empaquetando"
-  bash /src/scripts/bundle.sh --from portable
-
-  # El bundle se escribe como root dentro del contenedor, sobre un volumen
-  # montado del host. Ahi queda con permisos de root y despues ningun paso
-  # del runner puede moverlo ni borrarlo:
-  #   rm: cannot remove 'dist/.../bin/port': Permission denied
-  # Se abre el permisos aqui, que es el ultimo momento en que se es root.
-  chmod -R a+rwX /src/dist
+# El unico output es el binario. Se escribe como root dentro del contenedor,
+# sobre un volumen montado del host, asi que queda con permisos de root y
+# despues ningun paso del runner puede moverlo ni borrarlo:
+#   rm: cannot remove 'target/portable/bin/port': Permission denied
+# Se abren los permisos aqui, que es el ultimo momento en que se es root.
+chmod -R a+rwX /src/target/portable
 DOCKER
 }
 
@@ -141,7 +139,6 @@ build_native() {
 
   mkdir -p target/portable/bin
   cp target/release/port target/portable/bin/port
-  "$ROOT/scripts/bundle.sh" --from portable
 }
 
 die() { echo "error: $*" >&2; exit 1; }
@@ -158,8 +155,8 @@ main() {
   fi
 
   echo
-  echo "Listo. Bundle en:"
-  ls -d dist/port-"$VERSION"-linux-x86_64 2>/dev/null || true
+  echo "Listo. Binario de release en:"
+  echo "  target/portable/bin/port"
 }
 
 main "$@"

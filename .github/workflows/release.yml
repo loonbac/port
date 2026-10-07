@@ -9,6 +9,11 @@
 #
 # La publicación usa el `gh` CLI, que ya viene en el runner, en lugar de una
 # acción de terceros: cada dependencia externa es superficie de ataque.
+#
+# La release entrega paquetes nativos (.deb y .rpm). El binario se compila en
+# Docker contra Debian 12 (glibc 2.36) para que ambos paquetes arranquen en
+# Ubuntu 22.04+ y Fedora 36+, y después se prueba la instalación real en esas
+# distribuciones antes de publicar.
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: Release
@@ -36,9 +41,6 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
-
-    outputs:
-      version: ${{ steps.meta.outputs.version }}
 
     steps:
       - name: Checkout
@@ -89,36 +91,13 @@ jobs:
       - name: Test
         run: nix develop --command cargo test --workspace --locked
 
-      # `id: meta` hace falta: el job declara su salida como
-      # `steps.meta.outputs.version`. Sin el id la salida quedaba vacia.
-      - name: Preparar dist
-        id: meta
-        run: |
-          set -eu
-          mkdir -p dist
-          cp result/bin/${{ env.BIN }} dist/
-          # El tag manda: es lo que el usuario acaba de publicar. Si no hay tag todavia
-          # (por ejemplo en una ejecucion manual), se recurre a Cargo.toml, que es la
-          # fuente unica de la version del proyecto.
-          VERSION="$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)"
-          if [ -z "$VERSION" ]; then
-            VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
-          fi
-          echo "VERSION=$VERSION"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Subir binario
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
-        with:
-          name: release-binary
-          path: dist/${{ env.BIN }}
-          if-no-files-found: error
-
-  # Binario portable: compilado en Docker contra un glibc antiguo para que
-  # arranque en la mayor parte de distribuciones, con las librerias de GPU
-  # empaquetadas al lado y RUNPATH relativo.
-  portable:
-    name: bundle portable
+  # Paquetes nativos: el binario se compila en Docker contra un glibc antiguo
+  # para que el .deb y el .rpm funcionen en Debian/Ubuntu/Fedora, y despues
+  # scripts/test-install.sh los instala de verdad en cada distribucion. Esa
+  # prueba es el porton de la release: un paquete que instala pero no arranca
+  # no llega a publicarse.
+  native-packages:
+    name: paquetes nativos
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -133,10 +112,9 @@ jobs:
       - name: Retirar parches locales
         run: ./scripts/disable-local-patch.sh
 
-      # Docker viene preinstalado en los runners de Ubuntu, asi que el bundle
-      # se compila igual para todos los usuarios con independencia de su
-      # toolchain local.
-      - name: Compilar bundle portable
+      # Docker viene preinstalado en los runners de Ubuntu, asi que el binario
+      # se compila igual con independencia del toolchain local.
+      - name: Compilar binario de release
         run: ./scripts/build-portable.sh
 
       - name: Paquetes nativos
@@ -144,76 +122,30 @@ jobs:
           set -eu
           ./scripts/package.sh deb
           ./scripts/package.sh rpm
-      # Esta comprobacion replica la verificacion local que precede a cualquier
-      # cambio de release: `./scripts/build-portable.sh` + arranque del bundle +
-      # presencia del .desktop y de los iconos. El paso de arranque importa:
-      # el fallo que bloqueo todas las releases (bundle.sh con `$ROOT` sin
-      # definir) ocurria JUSTO DESPUES de que el binario arrancara, al copiar
-      # iconos, y aqui no se ejecutaba nada, asi que el job se veia roto sin
-      # mas.
-      - name: Comprobar el bundle
-        run: |
-          set -eu
-          BUNDLE="$(echo dist/port-*-linux-x86_64)"
-          echo "Bundle: $BUNDLE"
-          if [ ! -x "$BUNDLE/bin/port" ]; then
-            echo "::error::ejecutable bin/port no encontrado en $BUNDLE"
-            exit 1
-          fi
-          # El intérprete no debe apuntar al store: es lo que hace portable
-          # al binario fuera de Nix.
-          interp="$(readelf -l "$BUNDLE/bin/port" | sed -n 's/.*interpreter: \(.*\)\]/\1/p')"
-          case "$interp" in
-            /nix/store/*) echo "::error::el intérprete sigue en el store"; exit 1 ;;
-          esac
-          echo "Intérprete: $interp"
-
-          # El binario debe arrancar de verdad, no solo estar bien formado.
-          "$BUNDLE/bin/port" --help | head -3
-
-          # Y el bundle debe traer el .desktop y los iconos que bundle.sh
-          # instala al final. Comprobarlos aqui hace visible al instante una
-          # rotura de ese paso, en vez de publicar un bundle incompleto.
-          for f in \
-            share/applications/port.desktop \
-            share/icons/hicolor/256x256/apps/port-terminal.png \
-            share/pixmaps/port-terminal.png; do
-            if [ ! -e "$BUNDLE/$f" ]; then
-              echo "::error::falta $f dentro del bundle"
-              exit 1
-            fi
-          done
-          echo "Desktop e iconos presentes"
-
-      # El README promete `port-*.tar.gz` como instalacion recomendada, y
-      # hasta ahora NINGUN workflow creaba ese tar.gz: la release no podia
-      # cumplir su propia documentacion. Se crea aqui, con la misma fuente de
-      # version que bundle.sh (version.sh -> Cargo.toml), justo despues de la
-      # verificacion y antes de subir el artefacto.
-      - name: Empaquetar bundle en tar.gz
-        run: |
-          set -eu
           # shellcheck source=scripts/version.sh
           source scripts/version.sh
-          TARBALL="port-$PORT_VERSION-linux-x86_64.tar.gz"
-          # El -f se abre desde el cwd del proceso, no desde -C: primero se
-          # crea en el cwd y despues se mueve a dist/ para no dejar el tar
-          # dentro de si mismo.
-          tar -czf "$TARBALL" -C dist "port-$PORT_VERSION-linux-x86_64"
-          mv "$TARBALL" "dist/$TARBALL"
-          ls -la "dist/$TARBALL"
+          for f in "dist/port-$PORT_VERSION.deb" "dist/port-$PORT_VERSION.rpm"; do
+            [ -f "$f" ] || { echo "::error::falta $f"; exit 1; }
+          done
+
+      - name: Probar instalación en el sistema
+        run: |
+          ./scripts/test-install.sh deb
+          ./scripts/test-install.sh rpm
 
       - name: Subir artefactos
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: release-portable
-          path: dist/
+          name: release-packages
+          path: |
+            dist/*.deb
+            dist/*.rpm
           if-no-files-found: error
 
   publish:
     name: publicar release
     runs-on: ubuntu-24.04
-    needs: [linux-binary, portable]
+    needs: [linux-binary, native-packages]
     if: startsWith(github.ref, 'refs/tags/')
     timeout-minutes: 20
     # Único job con permiso de escritura.
@@ -240,17 +172,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
+          # shellcheck source=scripts/version.sh
+          source scripts/version.sh
           # Seleccion EXPLICITA de assets, nunca un find generico sobre todo
-          # dist/. Antes el find -name 'port' cazaba tambien
-          # deb-root/usr/bin/port y el binario del bundle: dos ficheros con el
-          # mismo nombre 'port' en la misma release, y `gh` rechaza assets
-          # duplicados. Ademas faltaba el tar.gz que promete el README.
-          VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
+          # dist/. Solo salen los paquetes nativos: el bundle portable y el
+          # tarball se retiraron, y el binario suelto ya no se publica.
           FILES=""
           for f in \
-            "dist/port-$VERSION-linux-x86_64.tar.gz" \
-            "dist/port-$VERSION.deb" \
-            "dist/port.spec"; do
+            "dist/port-$PORT_VERSION.deb" \
+            "dist/port-$PORT_VERSION.rpm"; do
             if [ -f "$f" ]; then
               FILES="$FILES $f"
             else
@@ -269,14 +199,13 @@ jobs:
             --notes "$(cat <<'NOTES'
           ## Instalar
 
-          **Bundle portable (recomendado)**:
-          ```bash
-          tar xf port-*.tar.gz
-          ./port-*/bin/port
-          ```
+          **Paquetes nativos (recomendado)**:
+          - Debian / Ubuntu: `sudo apt install ./port-<version>.deb`
+          - Fedora / RHEL: `sudo dnf install ./port-<version>.rpm`
 
-          **Paquete nativo**:
-          - Debian/Ubuntu: `sudo apt install ./port-<version>.deb`
+          Instalan la terminal como cualquier otra: binario en `/usr/bin`,
+          entrada `.desktop` e icono en las rutas del sistema. Se compilan
+          contra glibc 2.36, asi que funcionan en Ubuntu 22.04+ y Fedora 36+.
 
           **Nix** (cualquier distro de Linux, macOS o Windows con Nix):
           ```bash
