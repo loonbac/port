@@ -44,6 +44,9 @@ fn main() {
         cli::Command::Help => {
             println!("{}", cli::HELP);
         }
+        cli::Command::Version => {
+            println!("{}", cli::version());
+        }
         cli::Command::Plugin(command) => {
             std::process::exit(cli::run(command));
         }

@@ -16,6 +16,7 @@ pub enum Command {
     RunTerminal,
     Plugin(PluginCommand),
     Help,
+    Version,
 }
 
 #[derive(Debug)]
@@ -24,6 +25,13 @@ pub enum PluginCommand {
     Update { id: String },
     List,
     Remove { id: String },
+}
+
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Formato estándar de presentación para `port --version`.
+pub fn version() -> String {
+    format!("port {VERSION}")
 }
 
 pub const HELP: &str = "\
@@ -35,6 +43,7 @@ uso:
   port plugin update <id>     actualiza un plugin desde su origen
   port plugin list            muestra los plugins instalados
   port plugin remove <id>     desinstala un plugin
+  port --version              muestra la versión
   port --help                 esta ayuda
 ";
 
@@ -45,6 +54,7 @@ pub fn parse(args: impl Iterator<Item = String>) -> Command {
 
     match args.first().map(String::as_str) {
         Some("--help") | Some("-h") | Some("help") => Command::Help,
+        Some("--version") | Some("-V") | Some("version") => Command::Version,
         Some("plugin") => match args.get(1).map(String::as_str) {
             Some("add") => match args.get(2) {
                 Some(url) => Command::Plugin(PluginCommand::Add { url: url.clone() }),
@@ -274,5 +284,36 @@ mod tests {
             }),
             1
         );
+    }
+
+    #[test]
+    fn version_is_recognised() {
+        assert!(matches!(
+            parse(args(&["--version"]).into_iter()),
+            Command::Version
+        ));
+        assert!(matches!(
+            parse(args(&["-V"]).into_iter()),
+            Command::Version
+        ));
+        assert!(matches!(
+            parse(args(&["version"]).into_iter()),
+            Command::Version
+        ));
+    }
+
+    #[test]
+    fn version_does_not_open_the_terminal() {
+        assert!(!matches!(
+            parse(args(&["--version"]).into_iter()),
+            Command::RunTerminal
+        ));
+    }
+
+    #[test]
+    fn version_output_format_contains_crate_version() {
+        let text = version();
+        assert_eq!(text, format!("port {}", env!("CARGO_PKG_VERSION")));
+        assert!(HELP.contains("--version"));
     }
 }

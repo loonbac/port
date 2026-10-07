@@ -59,7 +59,9 @@
 
           port = pkgs.rustPlatform.buildRustPackage {
             pname = "port";
-            version = "0.1.0";
+            # Fuente única de versión: se toma del Cargo.toml del workspace para
+            # evitar que el nombre en el store de Nix difiera de la versión real.
+            version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package.version;
 
             # El filtro deja fuera `target/`, `result/` y `dist/`. Sin eso Nix
             # recorre esos arboles y acaba intentando copiar /nix/store desde si
