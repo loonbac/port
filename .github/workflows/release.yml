@@ -19,8 +19,11 @@
 name: Release
 
 on:
-  push:
-    tags: ['v*']
+  # Publicar es una decisión local: el binario y los paquetes se compilan y se
+  # prueban en la máquina de desarrollo (`scripts/ensayo-release.sh`) y la
+  # release se publica desde ahí con `gh release create`. Este workflow queda
+  # como respaldo manual para cuando esa máquina no esté disponible; el push de
+  # cada rama lo siguen verificando `ci.yml` y `packages.yml`.
   workflow_dispatch:
 
 permissions:
