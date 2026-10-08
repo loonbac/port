@@ -18,7 +18,6 @@ use port_term_core::input::Key;
 use port_term_core::pty::{PtyConfig, RunningApp};
 use port_term_core::session::MousePolicy;
 
-use crate::health::PluginHealth;
 use crate::hooks::{CloseDecision, KeyAction};
 
 use super::PluginRegistry;
@@ -171,7 +170,7 @@ impl PluginRegistry {
     /// el resto de hooks.
     pub fn mouse_policy(&self) -> MousePolicy {
         for entry in &self.plugins {
-            if !entry.enabled || entry.health.get() == PluginHealth::Disabled {
+            if !entry.can_invoke() {
                 continue;
             }
             if entry.plugin.mouse_hook().is_some() {
@@ -235,29 +234,36 @@ impl PluginRegistry {
         max_h
     }
 
-    /// Identificador de la sesión activa que debe mostrarse y recibir teclado.
-    pub fn active_session_id(&self) -> usize {
+    /// Identificador de la sesión activa que debe mostrarse y recibir teclado,
+    /// o `None` cuando ningún plugin activo responde o gestiona espacios.
+    ///
+    /// La vista utiliza este valor para sincronizar `session_mgr.select(...)` solo
+    /// cuando hay un `Some(id)`, evitando forzar la sesión 0 y mostrando una
+    /// sesión ajena cuando ningún plugin gestiona las sesiones.
+    pub fn active_session_id(&self) -> Option<usize> {
         for entry in &self.plugins {
-            if !entry.enabled || entry.health.get() == PluginHealth::Disabled {
+            if !entry.can_invoke() {
                 continue;
             }
             if entry.plugin.space_hook().is_some() {
-                return entry.invoke_hook(self.hook_budget, 0, || {
+                let id = entry.invoke_hook(self.hook_budget, None, || {
                     entry
                         .plugin
                         .space_hook()
                         .map(|h| h.active_session())
-                        .unwrap_or(0)
                 });
+                if id.is_some() {
+                    return id;
+                }
             }
         }
-        0
+        None
     }
 
     /// Índice del espacio activo según los plugins registrados.
     pub fn active_space_index(&self) -> usize {
         for entry in &self.plugins {
-            if !entry.enabled || entry.health.get() == PluginHealth::Disabled {
+            if !entry.can_invoke() {
                 continue;
             }
             if entry.plugin.space_hook().is_some() {

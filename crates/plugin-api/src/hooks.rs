@@ -107,6 +107,12 @@ pub trait LayoutHook {
 /// Capacidades de gestión de espacios de trabajo y sesiones múltiples (como Herdr).
 pub trait SpaceHook {
     /// Identificador de la sesión PTY activa que debe recibir entrada y renderizarse.
+    ///
+    /// El registro central consulta este identificador a través de
+    /// [`crate::registry::PluginRegistry::active_session_id`], que devuelve
+    /// `Option<usize>` (`None` si ningún plugin activo responde o implementa el
+    /// hook). Cuando devuelve `None`, el host conserva la sesión que ya está en
+    /// pantalla en lugar de seleccionar forzosamente la sesión 0.
     fn active_session(&self) -> usize {
         self.active_space()
     }

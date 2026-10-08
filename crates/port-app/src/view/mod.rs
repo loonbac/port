@@ -135,8 +135,9 @@ impl Render for TerminalView {
         }
 
         // 4. Sincroniza la sesión activa del gestor con la sesión solicitada por los plugins
-        let target_session = plugins.active_session_id();
-        session_mgr.select(target_session);
+        if let Some(target_session) = plugins.active_session_id() {
+            session_mgr.select(target_session);
+        }
 
         // 5. Notifica a los plugins el directorio de trabajo actual de cada sesión viva
         for (&id, session) in session_mgr.sessions().iter() {

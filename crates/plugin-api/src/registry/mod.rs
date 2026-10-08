@@ -28,7 +28,7 @@ use crate::hooks::Plugin;
 use crate::host::ExternalPlugin;
 use crate::services::Services;
 
-pub use crate::health::{PluginHealth, DEFAULT_HOOK_BUDGET};
+pub use crate::health::{PluginHealth, DEFAULT_HOOK_BUDGET, DEFAULT_PROBE_COOLDOWN};
 
 /// Información básica y estado de un plugin registrado.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,6 +54,7 @@ pub struct PluginRegistry {
     /// plugin apagado en el menú sale de la lista, con lo que deja de aportar.
     externals: Vec<Arc<ExternalPlugin>>,
     hook_budget: Duration,
+    probe_cooldown: Duration,
     config_path: RefCell<Option<PathBuf>>,
     last_modified: Cell<Option<SystemTime>>,
     services: Arc<Services>,
@@ -65,6 +66,7 @@ impl Default for PluginRegistry {
             plugins: Vec::new(),
             externals: Vec::new(),
             hook_budget: DEFAULT_HOOK_BUDGET,
+            probe_cooldown: DEFAULT_PROBE_COOLDOWN,
             config_path: RefCell::new(None),
             last_modified: Cell::new(None),
             services: Arc::new(Services::new()),
@@ -86,6 +88,19 @@ impl PluginRegistry {
     /// Configura el presupuesto de tiempo asignado a cada invocación de hook.
     pub fn set_hook_budget(&mut self, budget: Duration) {
         self.hook_budget = budget;
+    }
+
+    /// Periodo de enfriamiento tras el cual un plugin deshabilitado recibe una prueba.
+    pub fn probe_cooldown(&self) -> Duration {
+        self.probe_cooldown
+    }
+
+    /// Configura el periodo de enfriamiento para llamadas de prueba.
+    pub fn set_probe_cooldown(&mut self, cooldown: Duration) {
+        self.probe_cooldown = cooldown;
+        for plugin in &self.plugins {
+            plugin.cooldown.set(cooldown);
+        }
     }
 
     /// Sustituye la lista de plugins externos actualmente en ejecución.
@@ -114,21 +129,15 @@ impl PluginRegistry {
     /// Registra un nuevo plugin en la terminal, activo por defecto.
     pub fn register<P: Plugin>(&mut self, plugin: P) {
         self.publish_services(&plugin);
-        self.plugins.push(RegisteredPlugin {
-            plugin: Box::new(plugin),
-            enabled: true,
-            health: Cell::new(PluginHealth::Ok),
-        });
+        self.plugins
+            .push(RegisteredPlugin::new(Box::new(plugin), self.probe_cooldown));
     }
 
     /// Registra un plugin ya empaquetado en Box, activo por defecto.
     pub fn register_boxed(&mut self, plugin: Box<dyn Plugin>) {
         self.publish_services(plugin.as_ref());
-        self.plugins.push(RegisteredPlugin {
-            plugin,
-            enabled: true,
-            health: Cell::new(PluginHealth::Ok),
-        });
+        self.plugins
+            .push(RegisteredPlugin::new(plugin, self.probe_cooldown));
     }
 
     fn publish_services(&self, plugin: &dyn Plugin) {

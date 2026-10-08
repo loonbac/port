@@ -1,6 +1,6 @@
 //! Vigilancia de hooks: aislamiento de pánicos y salud (slow/disabled).
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -431,4 +431,202 @@ fn slow_layout_hook_with_any_element_is_disabled_by_watchdog() {
     let bars3 = registry.top_bars();
     assert_eq!(bars3.len(), 0);
     assert_eq!(counter.load(Ordering::SeqCst), 2);
+}
+
+/// Plugin con retardo dinámico para probar transiciones de presupuesto y decaimiento.
+struct MockDynamicDelayPlugin {
+    delay_ms: Arc<AtomicU64>,
+    counter: Arc<AtomicUsize>,
+}
+
+impl MockDynamicDelayPlugin {
+    fn new(delay_ms: Arc<AtomicU64>, counter: Arc<AtomicUsize>) -> Self {
+        Self { delay_ms, counter }
+    }
+}
+
+impl AppearanceHook for MockDynamicDelayPlugin {
+    fn opacity(&self) -> Option<f32> {
+        self.counter.fetch_add(1, Ordering::SeqCst);
+        let ms = self.delay_ms.load(Ordering::SeqCst);
+        if ms > 0 {
+            std::thread::sleep(Duration::from_millis(ms));
+        }
+        Some(0.42)
+    }
+}
+
+impl Plugin for MockDynamicDelayPlugin {
+    fn id(&self) -> &'static str {
+        "dynamic-delay"
+    }
+
+    fn name(&self) -> &'static str {
+        "Mock Dynamic Delay"
+    }
+
+    fn appearance_hook(&self) -> Option<&dyn AppearanceHook> {
+        Some(self)
+    }
+}
+
+#[test]
+fn strike_decays_when_call_is_within_budget() {
+    let mut registry = PluginRegistry::new();
+    registry.set_hook_budget(Duration::from_millis(5));
+    let delay_ms = Arc::new(AtomicU64::new(15));
+    let counter = Arc::new(AtomicUsize::new(0));
+    let plugin = MockDynamicDelayPlugin::new(Arc::clone(&delay_ms), Arc::clone(&counter));
+    registry.register(plugin);
+
+    // Llamada 1 lenta: supera presupuesto -> pasa a Slow
+    let _ = registry.effective_opacity();
+    assert_eq!(
+        registry.plugin_health("dynamic-delay"),
+        Some(PluginHealth::Slow),
+        "debe pasar a Slow tras la primera llamada lenta"
+    );
+
+    // Llamada 2 rápida: dentro del presupuesto -> debe decaer a Ok
+    delay_ms.store(0, Ordering::SeqCst);
+    let _ = registry.effective_opacity();
+    assert_eq!(
+        registry.plugin_health("dynamic-delay"),
+        Some(PluginHealth::Ok),
+        "una llamada dentro de presupuesto debe decaer el strike y volver a Ok"
+    );
+
+    // Llamada 3 lenta: al no ser consecutiva, debe volver a Slow, NO a Disabled
+    delay_ms.store(15, Ordering::SeqCst);
+    let _ = registry.effective_opacity();
+    assert_eq!(
+        registry.plugin_health("dynamic-delay"),
+        Some(PluginHealth::Slow),
+        "un strike aislado tras decaimiento no debe deshabilitar el plugin"
+    );
+}
+
+#[test]
+fn two_consecutive_slow_calls_disable_the_plugin_and_stops_invocation() {
+    let mut registry = PluginRegistry::new();
+    registry.set_hook_budget(Duration::from_millis(5));
+    let delay_ms = Arc::new(AtomicU64::new(15));
+    let counter = Arc::new(AtomicUsize::new(0));
+    let plugin = MockDynamicDelayPlugin::new(Arc::clone(&delay_ms), Arc::clone(&counter));
+    registry.register(plugin);
+
+    // Strike 1
+    let _ = registry.effective_opacity();
+    assert_eq!(
+        registry.plugin_health("dynamic-delay"),
+        Some(PluginHealth::Slow)
+    );
+    assert_eq!(counter.load(Ordering::SeqCst), 1);
+
+    // Strike 2 consecutivo
+    let _ = registry.effective_opacity();
+    assert_eq!(
+        registry.plugin_health("dynamic-delay"),
+        Some(PluginHealth::Disabled),
+        "dos llamadas lentas consecutivas deben deshabilitar el plugin"
+    );
+    assert_eq!(counter.load(Ordering::SeqCst), 2);
+
+    // Mientras está deshabilitado y antes del enfriamiento, el cuerpo no se invoca
+    let op = registry.effective_opacity();
+    assert_eq!(op, 1.0, "debe devolver el valor neutro/fallback");
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        2,
+        "el cuerpo del hook no debe ser invocado mientras está deshabilitado"
+    );
+}
+
+#[test]
+fn after_cooldown_probe_runs_and_fast_call_restores_ok() {
+    let mut registry = PluginRegistry::new();
+    registry.set_hook_budget(Duration::from_millis(5));
+    registry.set_probe_cooldown(Duration::from_millis(20));
+
+    let delay_ms = Arc::new(AtomicU64::new(15));
+    let counter = Arc::new(AtomicUsize::new(0));
+    let plugin = MockDynamicDelayPlugin::new(Arc::clone(&delay_ms), Arc::clone(&counter));
+    registry.register(plugin);
+
+    // Deshabilitar con 2 strikes consecutivos
+    let _ = registry.effective_opacity();
+    let _ = registry.effective_opacity();
+    assert_eq!(
+        registry.plugin_health("dynamic-delay"),
+        Some(PluginHealth::Disabled)
+    );
+    assert_eq!(counter.load(Ordering::SeqCst), 2);
+
+    // Antes de enfriamiento: no se invoca
+    let _ = registry.effective_opacity();
+    assert_eq!(counter.load(Ordering::SeqCst), 2);
+
+    // Esperar a que pase el enfriamiento
+    std::thread::sleep(Duration::from_millis(30));
+
+    // La llamada de prueba se configura como rápida
+    delay_ms.store(0, Ordering::SeqCst);
+    let op = registry.effective_opacity();
+    assert_eq!(op, 0.42, "la llamada de prueba debe ejecutarse y aportar");
+    assert_eq!(counter.load(Ordering::SeqCst), 3, "la prueba debe invocar el hook");
+    assert_eq!(
+        registry.plugin_health("dynamic-delay"),
+        Some(PluginHealth::Ok),
+        "la prueba exitosa debe restaurar el estado a Ok"
+    );
+
+    // Siguientes llamadas operan con normalidad en Ok
+    let _ = registry.effective_opacity();
+    assert_eq!(counter.load(Ordering::SeqCst), 4);
+    assert_eq!(
+        registry.plugin_health("dynamic-delay"),
+        Some(PluginHealth::Ok)
+    );
+}
+
+#[test]
+fn after_cooldown_probe_runs_and_slow_call_stays_disabled() {
+    let mut registry = PluginRegistry::new();
+    registry.set_hook_budget(Duration::from_millis(5));
+    registry.set_probe_cooldown(Duration::from_millis(20));
+
+    let delay_ms = Arc::new(AtomicU64::new(15));
+    let counter = Arc::new(AtomicUsize::new(0));
+    let plugin = MockDynamicDelayPlugin::new(Arc::clone(&delay_ms), Arc::clone(&counter));
+    registry.register(plugin);
+
+    // Deshabilitar con 2 strikes consecutivos
+    let _ = registry.effective_opacity();
+    let _ = registry.effective_opacity();
+    assert_eq!(
+        registry.plugin_health("dynamic-delay"),
+        Some(PluginHealth::Disabled)
+    );
+    assert_eq!(counter.load(Ordering::SeqCst), 2);
+
+    // Esperar a que pase el enfriamiento
+    std::thread::sleep(Duration::from_millis(30));
+
+    // La prueba sigue siendo lenta
+    delay_ms.store(15, Ordering::SeqCst);
+    let _ = registry.effective_opacity();
+    assert_eq!(counter.load(Ordering::SeqCst), 3, "la prueba debe haber corrido una vez");
+    assert_eq!(
+        registry.plugin_health("dynamic-delay"),
+        Some(PluginHealth::Disabled),
+        "si la prueba es lenta, el plugin debe permanecer en Disabled"
+    );
+
+    // Llamada inmediata posterior (nuevo enfriamiento no cumplido): no debe invocar el hook
+    let _ = registry.effective_opacity();
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        3,
+        "no debe volverse a invocar hasta el siguiente periodo de enfriamiento"
+    );
 }
