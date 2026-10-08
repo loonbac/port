@@ -103,8 +103,8 @@
                 # del repositorio, asi que ambos comparten el hash de la misma
                 # revision: master en Cargo.lock. Al mover esa revision hay que
                 # actualizar los dos hashes con el valor que reporta el build.
-                "port-plugin-herdr-0.1.0" = "sha256-+k737w91YAFgq3YBrPxAW91E7e5gwwE/QHkeAOYTuUg=";
-                "port-plugin-selection-0.1.0" = "sha256-+k737w91YAFgq3YBrPxAW91E7e5gwwE/QHkeAOYTuUg=";
+                "port-plugin-herdr-0.1.0" = "sha256-/xXI5fn/+ynAlewSLERg9iJ2/Q+X+jBzp/aIsKzsSKA=";
+                "port-plugin-selection-0.1.0" = "sha256-/xXI5fn/+ynAlewSLERg9iJ2/Q+X+jBzp/aIsKzsSKA=";
               };
             };
 
