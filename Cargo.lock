@@ -3858,7 +3858,7 @@ checksum = "5da3b0203fd7ee5720aa0b5e790b591aa5d3f41c3ed2c34a3a393382198af2f7"
 
 [[package]]
 name = "port"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "gpui",
  "port-plugin-api",
@@ -3869,7 +3869,7 @@ dependencies = [
 
 [[package]]
 name = "port-plugin-api"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "gpui",
  "port-plugin-sdk",
@@ -3882,7 +3882,7 @@ dependencies = [
 [[package]]
 name = "port-plugin-herdr"
 version = "0.1.0"
-source = "git+https://github.com/loonbac/port-plugins.git?branch=master#5bd435d8a40648fd88c82111285cf5c175c17b69"
+source = "git+https://github.com/loonbac/port-plugins.git?branch=master#ad3e54291cedc0f511c3b327ca7430e3a42e6ea6"
 dependencies = [
  "gpui",
  "port-plugin-api",
@@ -3892,7 +3892,7 @@ dependencies = [
 
 [[package]]
 name = "port-plugin-sdk"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "serde",
  "serde_json",
@@ -3901,7 +3901,7 @@ dependencies = [
 [[package]]
 name = "port-plugin-selection"
 version = "0.1.0"
-source = "git+https://github.com/loonbac/port-plugins.git?branch=master#5bd435d8a40648fd88c82111285cf5c175c17b69"
+source = "git+https://github.com/loonbac/port-plugins.git?branch=master#ad3e54291cedc0f511c3b327ca7430e3a42e6ea6"
 dependencies = [
  "port-plugin-api",
  "port-term-core",
@@ -3909,7 +3909,7 @@ dependencies = [
 
 [[package]]
 name = "port-term-core"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "alacritty_terminal",
  "libc",
