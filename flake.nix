@@ -101,9 +101,10 @@
                 # herdr y selection llegan como dependencias git (rutas
                 # in-process de port-plugins). El vendor es el checkout completo
                 # del repositorio, asi que ambos comparten el hash de la misma
-                # revision: master en Cargo.lock.
-                "port-plugin-herdr-0.1.0" = "sha256-fNskexo5eMjzZCJ5W/2TNwV0VwOkq4lqA9E3CJErKsI=";
-                "port-plugin-selection-0.1.0" = "sha256-fNskexo5eMjzZCJ5W/2TNwV0VwOkq4lqA9E3CJErKsI=";
+                # revision: master en Cargo.lock. Al mover esa revision hay que
+                # actualizar los dos hashes con el valor que reporta el build.
+                "port-plugin-herdr-0.1.0" = "sha256-+k737w91YAFgq3YBrPxAW91E7e5gwwE/QHkeAOYTuUg=";
+                "port-plugin-selection-0.1.0" = "sha256-+k737w91YAFgq3YBrPxAW91E7e5gwwE/QHkeAOYTuUg=";
               };
             };
 
