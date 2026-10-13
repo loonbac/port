@@ -221,14 +221,29 @@ fi
 
 hash_final="$(sed -n 's/.*"port-plugin-herdr-0\.1\.0" *= *"\(sha256-[^"]*\)".*/\1/p' "$FLAKE" | head -1)"
 
+# Lo que decide si el update del lock va a aceptar el cambio: nix se NIEGA a
+# escribir el lock mientras este repo tenga archivos seguidos por git con cambios
+# sin commitear (lo ve como "unlocked input"). Los archivos nuevos, los sin
+# trackear, no cuentan.
+sucios="$(git status --porcelain --untracked-files=no | awk '{print $2}' | paste -sd' ' -)"
+
 cat <<EOF
 
 Listo: el repo fija port-plugins en ${target:0:7} y el vendor en ${hash_final:-sin cambios}.
 
-Falta el paso con root, que mueve tu flake.lock a esta revisión:
+Falta mover tu flake.lock a esta revision, y va en dos tiempos porque el update
+del lock se niega mientras este repo tenga cambios sin commitear:
 
-  sudo nixos-rebuild switch --update-input $PORT_INPUT
+  git stash push -m "wip mientras actualizo el input"   # en este repo
+  nix flake update $PORT_INPUT                          # en tu config, la que consume este repo
+  sudo nixos-rebuild switch
+  git stash pop                                         # te devuelve tu trabajo
 
-Sin ese --update-input, el rebuild construye la revisión vieja aunque el repo ya
-esté al día.
+Los dos "git stash" sobran si el repo esta limpio. "--update-input" es el alias
+viejo de ese mismo update.
 EOF
+
+if [ -n "$sucios" ]; then
+  printf '\nOjo: ahora mismo hay cambios sin commitear en: %s\n' "$sucios"
+  printf 'Con eso el update del lock falla; el stash de arriba no es opcional.\n'
+fi
