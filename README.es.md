@@ -145,6 +145,23 @@ cargo build --release -p port
 ./target/release/port
 ```
 
+### Actualizar los plugins incluidos
+
+Los plugins en proceso vienen de
+[`loonbac/port-plugins`](https://github.com/loonbac/port-plugins) como
+dependencias git: `Cargo.lock` fija la revisión y `flake.nix` guarda el hash de
+vendorización de Nix de esa misma revisión. Mover una sin la otra rompe el
+`nix build` con un `hash mismatch` que no explica nada, así que se mueven juntas:
+
+```bash
+scripts/bump-port-plugins.sh --push     # revisión, lock, hashes, verificación, commit y push
+sudo nixos-rebuild switch --update-input port
+```
+
+El `--update-input` es el que mueve el `flake.lock` de tu configuración a la
+revisión nueva; sin él, el rebuild construye la vieja. `--help` lista las
+opciones (`--rev`, `--no-apply`, `--no-verify`, `--push`).
+
 ## Instalar un plugin
 
 Los plugins que no necesitan dibujar con GPUI se instalan como procesos
