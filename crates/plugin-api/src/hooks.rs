@@ -180,6 +180,16 @@ pub trait SpaceHook {
         let _ = (session_id, state, seen);
     }
 
+    /// Variables de entorno que el plugin suma a cada sesión nueva.
+    ///
+    /// Es aditivo a propósito: se suman al entorno del panel, sin tocar el
+    /// comando ni los argumentos que el usuario haya configurado. Así un plugin
+    /// describe el entorno de sus paneles sin decidir qué shell corre, que sigue
+    /// siendo del usuario.
+    fn session_env(&self) -> Vec<(String, String)> {
+        Vec::new()
+    }
+
     /// Comprueba si el plugin solicita cerrar una sesión específica.
     fn take_close_session_request(&self) -> Option<usize> {
         self.take_close_space_request()

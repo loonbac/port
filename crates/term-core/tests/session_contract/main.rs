@@ -15,7 +15,7 @@ mod pty;
 use std::time::{Duration, Instant};
 
 use port_term_core::pty::PtyConfig;
-use port_term_core::session::{GridSize, Session};
+use port_term_core::session::{GridSize, Session, SessionManager};
 
 /// Arranca un shell no interactivo predecible en vez del del usuario.
 fn plain_shell() -> PtyConfig {
@@ -76,6 +76,36 @@ fn fill_history(session: &mut Session, lines: usize) {
 /// cuando la salida lleva 200 ms callada los DECSET están aplicados.
 fn wait_for_modes(session: &mut Session) {
     let _ = pump_until_quiet(session, Duration::from_millis(200), Duration::from_secs(10));
+}
+
+/// El entorno que pide un plugin se suma al config por defecto sin cambiarlo.
+///
+/// Es la garantía de que un plugin describe el entorno de sus paneles pero no
+/// decide qué shell corre: que la salida del `printf` aparezca prueba las dos
+/// cosas a la vez, porque ese comando y sus argumentos son los del config por
+/// defecto y la variable es la que sumó el plugin.
+#[test]
+fn el_entorno_del_plugin_se_suma_sin_cambiar_el_shell() {
+    let mut config = plain_shell();
+    config.args = vec![
+        "-c".to_string(),
+        "printf plugin:%s \"$PORT_ENV_PLUGIN\"".to_string(),
+    ];
+    let mut manager = SessionManager::new(config, GridSize::new(80, 24)).expect("gestor");
+
+    manager
+        .spawn_session_with_env(vec![("PORT_ENV_PLUGIN".to_string(), "si".to_string())])
+        .expect("sesión con entorno del plugin");
+
+    let texto = pump_until_quiet(
+        manager.active_session_mut(),
+        Duration::from_millis(200),
+        Duration::from_secs(10),
+    );
+    assert!(
+        texto.contains("plugin:si"),
+        "el entorno del plugin no llegó al panel: {texto}"
+    );
 }
 
 /// El entorno extra del panel llega al proceso que corre dentro.

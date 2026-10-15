@@ -48,6 +48,21 @@ impl SessionManager {
         self.spawn_session_config(self.default_config.clone())
     }
 
+    /// Crea una sesión nueva partiendo del config por defecto, sumándole el
+    /// entorno que piden los plugins.
+    ///
+    /// El comando y los argumentos siguen siendo los del config por defecto —los
+    /// del usuario— porque lo único que se suma es entorno: un plugin no puede
+    /// cambiar qué shell corre.
+    pub fn spawn_session_with_env(
+        &mut self,
+        extra_env: Vec<(String, String)>,
+    ) -> std::io::Result<usize> {
+        let mut config = self.default_config.clone();
+        config.env.extend(extra_env);
+        self.spawn_session_config(config)
+    }
+
     /// Crea y añade una sesión que ejecuta el programa indicado y la activa.
     pub fn spawn_session_with(&mut self, config: PtyConfig) -> std::io::Result<usize> {
         self.spawn_session_config(config)

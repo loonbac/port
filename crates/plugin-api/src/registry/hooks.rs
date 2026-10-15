@@ -353,6 +353,25 @@ impl PluginRegistry {
         }
     }
 
+    /// Entorno que los plugins suman a cada sesión nueva, en orden de registro.
+    ///
+    /// Si dos plugins declaran la misma variable gana el último, que es el mismo
+    /// criterio con el que PORT aplica el entorno de un panel.
+    pub fn session_env(&self) -> Vec<(String, String)> {
+        let mut merged: Vec<(String, String)> = Vec::new();
+        for entry in &self.plugins {
+            let extra = entry.invoke_hook(self.hook_budget, Vec::new(), || {
+                entry
+                    .plugin
+                    .space_hook()
+                    .map(|hook| hook.session_env())
+                    .unwrap_or_default()
+            });
+            merged.extend(extra);
+        }
+        merged
+    }
+
     /// Comprueba si algún plugin activo solicita cerrar una sesión específica.
     pub fn take_close_session_request(&self) -> Option<usize> {
         for entry in &self.plugins {

@@ -122,7 +122,9 @@ impl Render for TerminalView {
 
         // 1. Si algún plugin solicitó crear una nueva sesión (Ctrl+Shift+T o Ctrl+Alt+T)
         if plugins.take_new_session_request() {
-            if let Ok(new_id) = session_mgr.spawn_session() {
+            // El entorno del plugin se suma al config del usuario; el shell sigue
+            // siendo el suyo.
+            if let Ok(new_id) = session_mgr.spawn_session_with_env(plugins.session_env()) {
                 plugins.on_session_created(new_id);
             }
         }
