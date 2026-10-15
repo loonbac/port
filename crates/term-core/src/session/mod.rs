@@ -35,6 +35,8 @@ pub use manager::SessionManager;
 pub use mouse::{MouseButton, MouseModifiers, MousePolicy};
 pub use selection::SelectionKind;
 
+pub use crate::program_status::ProgramStatus;
+
 /// Cuántas líneas guarda el scrollback.
 pub const DEFAULT_SCROLLBACK: usize = 10_000;
 
@@ -111,6 +113,8 @@ pub struct Session {
     cached_frame: RefCell<Option<Frame>>,
     dirty: Cell<bool>,
     mouse_policy: MousePolicy,
+    program_scanner: crate::program_status::ProgramStatusScanner,
+    output_seq: u64,
 }
 
 impl Session {
@@ -133,6 +137,8 @@ impl Session {
             cached_frame: RefCell::new(None),
             dirty: Cell::new(true),
             mouse_policy: MousePolicy::default(),
+            program_scanner: crate::program_status::ProgramStatusScanner::new(),
+            output_seq: 0,
         })
     }
 
@@ -148,6 +154,13 @@ impl Session {
         let bytes = self.pty.try_read();
         if bytes.is_empty() {
             return false;
+        }
+        self.output_seq = self.output_seq.wrapping_add(1);
+        let queries = self.program_scanner.advance(&bytes);
+        for _ in 0..queries {
+            let _ = self
+                .pty
+                .write(crate::program_status::PROGRAM_STATUS_RESPONSE);
         }
         self.processor.advance(&mut self.term, &bytes);
         self.handle_internal_events();
@@ -334,11 +347,53 @@ impl Session {
     pub fn drain_events(&self) -> Vec<TermEvent> {
         self.events.try_iter().collect()
     }
+
+    /// Estado del programa anunciado mediante el protocolo OSC 7501, si lo hay.
+    pub fn program_status(&self) -> Option<&ProgramStatus> {
+        self.program_scanner.status()
+    }
+
+    /// Título anunciado por el programa vía OSC 0 u OSC 2.
+    pub fn osc_title(&self) -> &str {
+        self.program_scanner.title()
+    }
+
+    /// Progreso anunciado por el programa vía OSC 9;4.
+    pub fn osc_progress(&self) -> &str {
+        self.program_scanner.progress()
+    }
+
+    /// Texto plano de las últimas `max_lines` líneas no vacías de la rejilla visible (viewport),
+    /// recortadas y unidas con `\n`, sin estilos ni secuencias ANSI.
+    pub fn screen_tail(&self, max_lines: usize) -> String {
+        let frame = self.frame();
+        let lines = frame.rows.iter().map(|row| {
+            row.runs
+                .iter()
+                .map(|run| run.text.as_str())
+                .collect::<String>()
+        });
+        crate::program_status::screen_tail_from_lines(lines, max_lines)
+    }
+
+    /// Secuencia de salida que se incrementa en cada `pump()` que recibe datos no vacíos del PTY.
+    pub fn output_seq(&self) -> u64 {
+        self.output_seq
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::CellPos;
+    use super::{CellPos, GridSize, Session};
+    use crate::pty::PtyConfig;
+
+    fn plain_shell() -> PtyConfig {
+        PtyConfig {
+            command: "/bin/sh".to_string(),
+            args: Vec::new(),
+            cwd: None,
+        }
+    }
 
     /// El reporte SGR no admite fila ni columna cero: un puntero sobre el margen
     /// debe seguir produciendo una celda válida.
@@ -352,5 +407,24 @@ mod tests {
     fn una_celda_valida_se_conserva_tal_cual() {
         let cell = CellPos::new(80, 24);
         assert_eq!((cell.column, cell.row), (80, 24));
+    }
+
+    #[test]
+    fn session_primitivas_de_estado_en_sesion_viva() {
+        let mut session = Session::spawn(plain_shell(), GridSize::new(80, 24)).expect("sesión");
+        assert_eq!(session.output_seq(), 0);
+        assert_eq!(session.program_status(), None);
+        assert_eq!(session.osc_title(), "");
+        assert_eq!(session.osc_progress(), "");
+
+        // Simulamos la llegada de secuencias OSC y texto por el procesador
+        session
+            .processor
+            .advance(&mut session.term, b"linea uno\r\nlinea dos\r\n");
+        let tail = session.screen_tail(1);
+        assert_eq!(tail, "linea dos");
+
+        let tail2 = session.screen_tail(2);
+        assert_eq!(tail2, "linea uno\nlinea dos");
     }
 }

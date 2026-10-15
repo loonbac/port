@@ -26,6 +26,23 @@ pub enum KeyAction {
     Consume,
 }
 
+/// Estado de agente de una sesión, con el modelo de Herdr.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AgentState {
+    #[default]
+    Unknown,
+    Idle,
+    Working,
+    Blocked,
+}
+
+impl AgentState {
+    /// `true` cuando el estado exige que el usuario vaya a atender la sesión.
+    pub fn needs_attention(&self) -> bool {
+        matches!(self, Self::Blocked)
+    }
+}
+
 /// Capacidades de personalización visual (fondo, opacidad, paleta, fuentes).
 pub trait AppearanceHook {
     /// Opacidad deseada para el fondo de la ventana (0.0 translúcido ..= 1.0 opaco).
@@ -150,6 +167,11 @@ pub trait SpaceHook {
         let _ = (session_id, app);
     }
 
+    /// Notifica el estado de agente de una sesión. Se invoca sólo cuando cambia.
+    fn update_session_agent(&self, session_id: usize, state: AgentState, seen: bool) {
+        let _ = (session_id, state, seen);
+    }
+
     /// Comprueba si el plugin solicita cerrar una sesión específica.
     fn take_close_session_request(&self) -> Option<usize> {
         self.take_close_space_request()
@@ -257,5 +279,19 @@ pub trait Plugin: 'static {
     /// Configuración actual que este plugin desea guardar en el archivo.
     fn save_config(&self) -> Option<PluginConfig> {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agent_state_needs_attention_only_when_blocked() {
+        assert_eq!(AgentState::default(), AgentState::Unknown);
+        assert!(!AgentState::Unknown.needs_attention());
+        assert!(!AgentState::Idle.needs_attention());
+        assert!(!AgentState::Working.needs_attention());
+        assert!(AgentState::Blocked.needs_attention());
     }
 }

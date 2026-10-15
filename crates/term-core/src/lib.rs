@@ -17,6 +17,9 @@
 
 pub mod frame;
 pub mod input;
+pub mod program_status;
 pub mod pty;
 pub mod session;
 pub mod sysinfo;
+
+pub use program_status::ProgramStatus;

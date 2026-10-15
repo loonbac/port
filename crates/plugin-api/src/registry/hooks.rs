@@ -18,7 +18,7 @@ use port_term_core::input::Key;
 use port_term_core::pty::{PtyConfig, RunningApp};
 use port_term_core::session::MousePolicy;
 
-use crate::hooks::{CloseDecision, KeyAction};
+use crate::hooks::{AgentState, CloseDecision, KeyAction};
 
 use super::PluginRegistry;
 
@@ -247,10 +247,7 @@ impl PluginRegistry {
             }
             if entry.plugin.space_hook().is_some() {
                 let id = entry.invoke_hook(self.hook_budget, None, || {
-                    entry
-                        .plugin
-                        .space_hook()
-                        .map(|h| h.active_session())
+                    entry.plugin.space_hook().map(|h| h.active_session())
                 });
                 if id.is_some() {
                     return id;
@@ -340,6 +337,17 @@ impl PluginRegistry {
             entry.invoke_hook(self.hook_budget, (), || {
                 if let Some(hook) = entry.plugin.space_hook() {
                     hook.update_session_app(session_id, app);
+                }
+            });
+        }
+    }
+
+    /// Notifica a los plugins el estado de agente de una sesión.
+    pub fn update_session_agent(&self, session_id: usize, state: AgentState, seen: bool) {
+        for entry in &self.plugins {
+            entry.invoke_hook(self.hook_budget, (), || {
+                if let Some(hook) = entry.plugin.space_hook() {
+                    hook.update_session_agent(session_id, state, seen);
                 }
             });
         }
@@ -448,5 +456,64 @@ impl PluginRegistry {
             }
         }
         elements
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::hooks::{AgentState, Plugin, SpaceHook};
+
+    struct TestAgentPlugin {
+        received_session: Arc<AtomicUsize>,
+        received_state: Arc<std::sync::RwLock<Option<AgentState>>>,
+        received_seen: Arc<AtomicBool>,
+    }
+
+    impl Plugin for TestAgentPlugin {
+        fn id(&self) -> &'static str {
+            "test-agent"
+        }
+
+        fn name(&self) -> &'static str {
+            "Test Agent Plugin"
+        }
+
+        fn space_hook(&self) -> Option<&dyn SpaceHook> {
+            Some(self)
+        }
+    }
+
+    impl SpaceHook for TestAgentPlugin {
+        fn update_session_agent(&self, session_id: usize, state: AgentState, seen: bool) {
+            self.received_session.store(session_id, Ordering::SeqCst);
+            *self.received_state.write().unwrap() = Some(state);
+            self.received_seen.store(seen, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn update_session_agent_notifica_a_los_plugins_registrados() {
+        let session = Arc::new(AtomicUsize::new(999));
+        let state = Arc::new(std::sync::RwLock::new(None));
+        let seen = Arc::new(AtomicBool::new(false));
+
+        let plugin = TestAgentPlugin {
+            received_session: session.clone(),
+            received_state: state.clone(),
+            received_seen: seen.clone(),
+        };
+
+        let mut registry = PluginRegistry::default();
+        registry.register(plugin);
+
+        registry.update_session_agent(42, AgentState::Blocked, true);
+
+        assert_eq!(session.load(Ordering::SeqCst), 42);
+        assert_eq!(*state.read().unwrap(), Some(AgentState::Blocked));
+        assert!(seen.load(Ordering::SeqCst));
     }
 }
