@@ -3865,6 +3865,9 @@ dependencies = [
  "port-plugin-herdr",
  "port-plugin-selection",
  "port-term-core",
+ "regex",
+ "serde",
+ "toml 0.8.23",
 ]
 
 [[package]]
