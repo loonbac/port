@@ -19,11 +19,11 @@
     "port-plugins": {
       "flake": false,
       "locked": {
-        "lastModified": 1792046388,
-        "narHash": "sha256-9qPQL8U5PyrvwL6quX23VMpYl854qSVl5T/hM6CAQ3U=",
+        "lastModified": 1792047132,
+        "narHash": "sha256-WS9foDcETsLcA2hhUPZJwB3VIkc6RxHhlqe29AYJ3fA=",
         "owner": "loonbac",
         "repo": "port-plugins",
-        "rev": "abdae109e7298d0ec373104b81ce3463d9e4e253",
+        "rev": "a41de0b6dbcefb40f02d0550f842b37b5fbf5953",
         "type": "github"
       },
       "original": {
