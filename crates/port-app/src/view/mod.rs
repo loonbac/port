@@ -27,6 +27,7 @@ use port_plugin_api::PluginRegistry;
 use port_term_core::frame::Rgb;
 use port_term_core::session::{MouseButton as TerminalMouseButton, SessionManager};
 
+use crate::agent::{is_known_agent, AgentTracker, SessionSignals};
 use crate::metrics::Metrics;
 
 use close_prompt::render_close_prompt;
@@ -44,6 +45,7 @@ pub struct TerminalView {
     plugins: Rc<RefCell<PluginRegistry>>,
     menu_state: Rc<RefCell<MenuState>>,
     close_prompt: Rc<RefCell<ClosePromptState>>,
+    agent_tracker: RefCell<AgentTracker>,
     /// Estado del arrastre de selección. Vive en la vista, no en el render: un
     /// `window.refresh()` reconstruye los manejadores y la bandera debe seguir
     /// encendida entre un movimiento del ratón y el siguiente.
@@ -73,6 +75,7 @@ impl TerminalView {
             plugins,
             menu_state,
             close_prompt,
+            agent_tracker: RefCell::new(AgentTracker::new()),
             drag_selecting: Rc::new(Cell::new(false)),
             program_drag: Rc::new(Cell::new(None)),
         }
@@ -150,12 +153,39 @@ impl Render for TerminalView {
         }
 
         // 6. Notifica a los plugins qué programa corre en primer plano en cada sesión
+        let mut known_agents = Vec::with_capacity(session_mgr.sessions().len());
         for (&id, session) in session_mgr.sessions().iter() {
             let app = session.foreground_app();
             plugins.update_session_app(id, app.as_ref());
+            let known = app.as_ref().is_some_and(|a| is_known_agent(&a.bin));
+            known_agents.push((id, known));
         }
 
         session_mgr.pump();
+
+        // Rastreo de estado de agente por sesión y notificación de cambios a plugins
+        let now = std::time::Instant::now();
+        let active_id = session_mgr.active_id();
+        let signals = known_agents.into_iter().filter_map(|(id, known_agent)| {
+            let session = session_mgr.sessions().get(&id)?;
+            let program_state = session.program_status().and_then(|st| st.state.clone());
+            let output_seq = session.output_seq();
+            Some((
+                id,
+                SessionSignals {
+                    program_state,
+                    output_seq,
+                    known_agent,
+                },
+            ))
+        });
+        let changes = self
+            .agent_tracker
+            .borrow_mut()
+            .update(signals, active_id, now);
+        for (id, state, seen) in changes {
+            plugins.update_session_agent(id, state, seen);
+        }
 
         // Retira las sesiones cuyo shell terminó (por ejemplo, tras `exit`) y
         // avisa a los plugins para quelimpien sus pestañas y espacios.

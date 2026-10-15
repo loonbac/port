@@ -3,8 +3,11 @@
 //! Aquí solo se conectan piezas: se arranca el shell, se decide el tamaño
 //! inicial de la ventana y se entrega la vista.
 
+mod agent;
+#[rustfmt::skip]
 mod app;
 
+#[rustfmt::skip]
 mod cli;
 mod keys;
 mod menu;
