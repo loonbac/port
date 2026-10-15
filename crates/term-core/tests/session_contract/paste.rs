@@ -21,6 +21,7 @@ pub(crate) fn echo_shell(bracketed: bool) -> PtyConfig {
             format!("stty raw -echo; printf '{modos}'; cat -v"),
         ],
         cwd: None,
+        env: Vec::new(),
     }
 }
 

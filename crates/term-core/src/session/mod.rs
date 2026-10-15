@@ -392,6 +392,7 @@ mod tests {
             command: "/bin/sh".to_string(),
             args: Vec::new(),
             cwd: None,
+            env: Vec::new(),
         }
     }
 

@@ -28,6 +28,7 @@ fn mouse_reporting_shell(alternate_screen: bool) -> PtyConfig {
             format!("stty raw -echo; printf '{modos}'; cat -v"),
         ],
         cwd: None,
+        env: Vec::new(),
     }
 }
 

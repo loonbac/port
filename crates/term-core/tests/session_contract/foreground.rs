@@ -79,6 +79,7 @@ fn a_background_job_is_not_reported_as_foreground_app() {
         command: "/bin/sh".to_string(),
         args: vec!["-i".to_string()],
         cwd: None,
+        env: Vec::new(),
     };
     let mut session = Session::spawn(config, GridSize::new(60, 10)).expect("sesión");
     std::thread::sleep(Duration::from_millis(400));

@@ -69,6 +69,7 @@ fn echo_config(marker: &str) -> PtyConfig {
         command: "/bin/echo".to_string(),
         args: vec![marker.to_string()],
         cwd: None,
+        env: Vec::new(),
     }
 }
 

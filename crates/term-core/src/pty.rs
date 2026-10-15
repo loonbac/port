@@ -28,6 +28,13 @@ pub struct PtyConfig {
     pub args: Vec<String>,
     /// Directorio de trabajo inicial.
     pub cwd: Option<String>,
+    /// Variables de entorno extra para el proceso, además de las que PORT fija.
+    ///
+    /// Se aplican después de `TERM`, `COLORTERM` y `TERM_PROGRAM`, así que
+    /// pueden reemplazarlas. Es el punto por el que un plugin describe el
+    /// entorno de sus paneles: el núcleo no necesita conocer a ningún programa
+    /// en particular para que otro pueda publicarse dentro de la terminal.
+    pub env: Vec<(String, String)>,
 }
 
 impl Default for PtyConfig {
@@ -37,6 +44,7 @@ impl Default for PtyConfig {
             command: shell,
             args: vec!["-l".to_string()],
             cwd: std::env::var("HOME").ok(),
+            env: Vec::new(),
         }
     }
 }
@@ -85,6 +93,10 @@ impl Pty {
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
         command.env("TERM_PROGRAM", "port");
+        // Al final: lo que pida quien lanza el panel gana sobre lo que fija PORT.
+        for (name, value) in &config.env {
+            command.env(name, value);
+        }
 
         let child = pair
             .slave

@@ -166,6 +166,7 @@ fn fish_device_queries_are_replied_automatically_without_blocking() {
         command: fish,
         args: vec!["-l".to_string()],
         cwd: None,
+        env: Vec::new(),
     };
     let mut session = Session::spawn(config, GridSize::new(100, 30)).expect("sesión fish");
     let start = Instant::now();
@@ -204,6 +205,7 @@ fn spawn_session_with_runs_the_given_program_and_activates_it() {
         command: program,
         args: vec!["visor-de-port".to_string()],
         cwd: None,
+        env: Vec::new(),
     };
     let id = manager
         .spawn_session_with(config)
