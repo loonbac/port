@@ -457,6 +457,22 @@ impl PluginRegistry {
         }
         elements
     }
+    /// `true` si algún plugin activo necesita repintado continuo (animación).
+    pub fn needs_animation(&self) -> bool {
+        for entry in &self.plugins {
+            let needed = entry.invoke_hook(self.hook_budget, false, || {
+                entry
+                    .plugin
+                    .layout_hook()
+                    .map(|h| h.needs_animation())
+                    .unwrap_or(false)
+            });
+            if needed {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 #[cfg(test)]
@@ -465,7 +481,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::hooks::{AgentState, Plugin, SpaceHook};
+    use crate::hooks::{AgentState, LayoutHook, Plugin, SpaceHook};
 
     struct TestAgentPlugin {
         received_session: Arc<AtomicUsize>,
@@ -515,5 +531,39 @@ mod tests {
         assert_eq!(session.load(Ordering::SeqCst), 42);
         assert_eq!(*state.read().unwrap(), Some(AgentState::Blocked));
         assert!(seen.load(Ordering::SeqCst));
+    }
+
+    struct TestLayoutPlugin {
+        animate: bool,
+    }
+
+    impl Plugin for TestLayoutPlugin {
+        fn id(&self) -> &'static str {
+            "test-layout"
+        }
+
+        fn name(&self) -> &'static str {
+            "Test Layout Plugin"
+        }
+
+        fn layout_hook(&self) -> Option<&dyn LayoutHook> {
+            Some(self)
+        }
+    }
+
+    impl LayoutHook for TestLayoutPlugin {
+        fn needs_animation(&self) -> bool {
+            self.animate
+        }
+    }
+
+    #[test]
+    fn needs_animation_es_or_entre_los_plugins_de_layout() {
+        let mut registry = PluginRegistry::default();
+        assert!(!registry.needs_animation());
+        registry.register(TestLayoutPlugin { animate: false });
+        assert!(!registry.needs_animation());
+        registry.register(TestLayoutPlugin { animate: true });
+        assert!(registry.needs_animation());
     }
 }

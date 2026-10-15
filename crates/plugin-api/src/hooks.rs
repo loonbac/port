@@ -119,6 +119,14 @@ pub trait LayoutHook {
     fn bottom_bar_height(&self) -> f32 {
         0.0
     }
+
+    /// `true` si el plugin pinta algo animado por reloj (spinner, parpadeo) y
+    /// necesita que la ventana siga pidiendo cuadros aunque no haya salida
+    /// del PTY ni gesto del usuario. Sin esto, GPUI solo repinta a demanda y
+    /// la animación se congela en reposo.
+    fn needs_animation(&self) -> bool {
+        false
+    }
 }
 
 /// Capacidades de gestión de espacios de trabajo y sesiones múltiples (como Herdr).

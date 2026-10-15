@@ -235,6 +235,10 @@ impl Render for TerminalView {
         // La sesión es la única fuente de verdad de la política: la vista la
         // lee aquí, con el préstamo que ya tiene, y no guarda copia propia.
         let policy = session_mgr.active_session().mouse_policy();
+        // Si un plugin anima por reloj (spinner, parpadeo), hay que seguir
+        // pidiendo cuadros aunque el PTY esté callado y no haya gestos; si no,
+        // GPUI solo repinta a demanda y la animación se congela en reposo.
+        let needs_animation = plugins.needs_animation();
         drop(session_mgr);
         drop(plugins);
 
@@ -541,6 +545,10 @@ impl Render for TerminalView {
             ));
         }
         drop(prompt);
+
+        if needs_animation {
+            window.request_animation_frame();
+        }
 
         root
     }
