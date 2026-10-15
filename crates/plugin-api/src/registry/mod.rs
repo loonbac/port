@@ -129,6 +129,7 @@ impl PluginRegistry {
     /// Registra un nuevo plugin en la terminal, activo por defecto.
     pub fn register<P: Plugin>(&mut self, plugin: P) {
         self.publish_services(&plugin);
+        plugin.attach_services(Arc::clone(&self.services));
         self.plugins
             .push(RegisteredPlugin::new(Box::new(plugin), self.probe_cooldown));
     }
@@ -136,6 +137,7 @@ impl PluginRegistry {
     /// Registra un plugin ya empaquetado en Box, activo por defecto.
     pub fn register_boxed(&mut self, plugin: Box<dyn Plugin>) {
         self.publish_services(plugin.as_ref());
+        plugin.attach_services(Arc::clone(&self.services));
         self.plugins
             .push(RegisteredPlugin::new(plugin, self.probe_cooldown));
     }

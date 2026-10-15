@@ -15,7 +15,7 @@ use port_term_core::pty::{PtyConfig, RunningApp};
 use port_term_core::session::{GridSize, MousePolicy};
 
 use crate::config::PluginConfig;
-use crate::services::Service;
+use crate::services::{Service, Services};
 
 /// Acción resultante tras procesar una pulsación en un hook de entrada.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -310,6 +310,18 @@ pub trait Plugin: 'static {
     /// El registro las publica en el directorio de servicios al registrarlo.
     fn services(&self) -> Vec<Arc<dyn Service>> {
         Vec::new()
+    }
+
+    /// Recibe el directorio de servicios del anfitrión al ser registrado.
+    ///
+    /// Es lo que le permite **usar** lo que publica otro plugin y no sólo
+    /// publicar lo suyo: sin este mango, un plugin podría ofrecer capacidades
+    /// pero no consumir ninguna, que es la mitad del sentido del directorio.
+    ///
+    /// Llega al registrar, así que puede guardarse y consultarse después: para
+    /// cuando alguien pide algo, todos los plugins ya publicaron lo suyo.
+    fn attach_services(&self, services: Arc<Services>) {
+        let _ = services;
     }
 
     /// Configuración por defecto que este plugin define al crear el archivo.
