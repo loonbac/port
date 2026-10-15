@@ -20,8 +20,8 @@ use std::rc::Rc;
 
 use gpui::prelude::*;
 use gpui::{
-    canvas, div, App, Bounds, Context, FocusHandle, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Render, ScrollWheelEvent, Window,
+    canvas, div, App, Bounds, Context, ExternalPaths, FocusHandle, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, Render, ScrollWheelEvent, Window,
 };
 use port_plugin_api::PluginRegistry;
 use port_term_core::frame::Rgb;
@@ -412,6 +412,22 @@ impl Render for TerminalView {
                 .on_mouse_up_out(MouseButton::Left, mouse_up(MouseButton::Left))
                 .on_mouse_up_out(MouseButton::Middle, mouse_up(MouseButton::Middle))
                 .on_mouse_up_out(MouseButton::Right, mouse_up(MouseButton::Right))
+                // Soltar un archivo del gestor de archivos pega su ubicación
+                // en la línea de comandos. GPUI convierte el soltar de rutas
+                // externas en `ExternalPaths`, y el texto entra al programa por
+                // el mismo camino que `Ctrl+Shift+V`: el escapado y el modo de
+                // pegado entre corchetes son del núcleo. El gesto no toca la
+                // selección local: soltar no es arrastrar sobre la rejilla.
+                .on_drop::<ExternalPaths>({
+                    let session = Rc::clone(&self.session_manager);
+                    move |paths: &ExternalPaths, window: &mut Window, _cx: &mut App| {
+                        session
+                            .borrow_mut()
+                            .active_session_mut()
+                            .paste_dropped_paths(paths.paths());
+                        window.refresh();
+                    }
+                })
                 .child(
                     canvas(
                         {

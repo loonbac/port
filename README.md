@@ -35,6 +35,8 @@ plugin can replace core behaviour without the core knowing it exists.
   frames are only rebuilt when the grid actually changes.
 - **Multi-session** — every space and every tab owns an isolated PTY; background
   jobs keep running when you switch away.
+- **Drag a file onto the grid** — the item's location is pasted at the cursor,
+  escaped for the shell, so a name with spaces stays a single argument.
 - **Plugin system** — two kinds, one contract. In-process Rust traits for
   anything that needs to draw with GPUI, and standalone processes for plugins
   you install without rebuilding PORT.
@@ -63,6 +65,10 @@ plugin can replace core behaviour without the core knowing it exists.
 
 Mouse: drag to select, double-click a word, triple-click a line. Releasing the
 button copies the selection to the clipboard.
+
+Drag a file from your file manager and drop it on the grid: its location is
+pasted into the program, shell-escaped. Dropping several items pastes them as a
+space-separated list. Files dropped on a plugin bar are not pasted anywhere.
 
 Programs that capture the mouse — pi, vim, less — receive the click, the drag
 and the release as terminal mouse reports (SGR), so their own dragging works:

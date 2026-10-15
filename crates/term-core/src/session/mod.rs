@@ -6,9 +6,10 @@
 //!
 //! Los contratos con dueño propio viven en submódulos: el protocolo de ratón y
 //! su política ([`mouse`]), el modelo de selección ([`selection`]), la
-//! codificación del pegado ([`paste`]) y el ciclo de vida de pestañas y
-//! espacios ([`manager`]). Este módulo conserva el estado compartido y la
-//! coordinación de PTY, rejilla y viewport, incluida la rueda.
+//! codificación del pegado ([`paste`]), la ubicación de los elementos soltados
+//! ([`drop`]) y el ciclo de vida de pestañas y espacios ([`manager`]). Este
+//! módulo conserva el estado compartido y la coordinación de PTY, rejilla y
+//! viewport, incluida la rueda.
 
 use std::cell::{Cell, RefCell};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -22,6 +23,7 @@ use crate::frame::{self, Frame, Style};
 use crate::input::KeyMode;
 use crate::pty::{Pty, PtyConfig, RunningApp};
 
+mod drop;
 mod manager;
 mod mouse;
 mod paste;
@@ -188,6 +190,17 @@ impl Session {
                 _ => {}
             }
         }
+    }
+
+    /// Pega en el programa la ubicación de los elementos soltados sobre la
+    /// rejilla (arrastrar y soltar desde el gestor de archivos).
+    ///
+    /// Pasa por [`Session::paste`] a propósito: lo soltado es texto que el
+    /// usuario inserta en la línea de comandos, así que respeta el modo de
+    /// pegado entre corchetes y el programa nunca lo interpreta como salida de
+    /// la rejilla.
+    pub fn paste_dropped_paths(&mut self, paths: &[std::path::PathBuf]) {
+        self.paste(&drop::paths_as_text(paths));
     }
 
     /// El shell terminó.

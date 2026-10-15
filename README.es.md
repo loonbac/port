@@ -40,6 +40,9 @@ sin que el núcleo sepa que existe.
   cambia de verdad.
 - **Multisesión** — cada espacio y cada pestaña tiene su propio PTY aislado; los
   procesos en segundo plano siguen corriendo al cambiar.
+- **Arrastrar un archivo a la rejilla** — la ubicación del elemento se pega en el
+  cursor, escapada para el shell, así que un nombre con espacios sigue siendo un
+  solo argumento.
 - **Sistema de plugins** — dos tipos, un mismo contrato. Traits de Rust en el
   proceso para lo que necesita dibujar con GPUI, y procesos independientes para
   los plugins que instalas sin recompilar PORT.
@@ -68,6 +71,11 @@ sin que el núcleo sepa que existe.
 
 Ratón: arrastrar selecciona, doble clic selecciona la palabra y triple clic la
 línea completa. Al soltar el botón la selección se copia al portapapeles.
+
+Arrastra un archivo desde el gestor de archivos y suéltalo sobre la rejilla: su
+ubicación se pega en el programa, escapada para el shell. Si sueltas varios
+elementos, se pegan como una lista separada por espacios. Un archivo soltado
+sobre una barra de un plugin no se pega en ningún sitio.
 
 Los programas que capturan el ratón —pi, vim, less— reciben el clic, el
 arrastre y la liberación como reportes de ratón del terminal (SGR), así que su

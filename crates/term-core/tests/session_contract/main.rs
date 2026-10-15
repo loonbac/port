@@ -3,6 +3,7 @@
 //! Es la verificación de integración del núcleo: si esto pasa, el shell responde
 //! y la rejilla refleja lo que el shell escribe.
 
+mod drop;
 #[cfg(target_os = "linux")]
 mod foreground;
 mod grid;

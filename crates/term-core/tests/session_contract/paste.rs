@@ -10,8 +10,9 @@ use crate::{pump_until_quiet, wait_for_modes};
 /// Programa que deja la entrada en crudo y devuelve a la pantalla todo lo que
 /// recibe, escapando el ESC como `^[`. Con `bracketed` pide además el modo de
 /// pegado entre corchetes (`\e[?2004h`); así se observan exactamente los bytes
-/// que `paste` escribe al PTY.
-fn echo_shell(bracketed: bool) -> PtyConfig {
+/// que `paste` escribe al PTY. Lo comparten las pruebas del pegado y las del
+/// soltar archivos: las dos observan lo que llega al programa.
+pub(crate) fn echo_shell(bracketed: bool) -> PtyConfig {
     let modos = if bracketed { "\\033[?2004h" } else { "" };
     PtyConfig {
         command: "/bin/sh".to_string(),
