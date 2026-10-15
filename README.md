@@ -227,6 +227,28 @@ impl Plugin for MyPlugin {
 Available hooks: `AppearanceHook`, `InputHook`, `LayoutHook`, `SpaceHook` and
 `LifecycleHook`.
 
+### Per-session agent state
+
+The core detects whether an AI agent runs in a session and in which state
+it is (`Unknown`, `Idle`, `Working`, `Blocked`, with a seen flag), combining
+the state the program itself announces (OSC 7501), patterns from its output
+(manifests) and PTY activity. Any in-process plugin can consume it with a
+`SpaceHook` method:
+
+```rust
+use port_plugin_api::{AgentState, SpaceHook};
+
+impl SpaceHook for MyPlugin {
+    fn update_session_agent(&self, session_id: usize, state: AgentState, seen: bool) {
+        // `seen == false` together with `Blocked` or `Idle` means
+        // "needs something or finished and not looked at yet".
+    }
+}
+```
+
+The core notifies only on change; the plugin stores and draws. The terminal
+stays simple and each plugin decides what to show.
+
 There is deliberately no hook for the plugin manager itself. That menu is core:
 it is the way into everything PORT can do, and it must not depend on an
 extension loading in order to be usable.
@@ -309,7 +331,7 @@ Official plugins live in **[loonbac/port-plugins](https://github.com/loonbac/por
 | `font` | `AppearanceHook` | Font family, size and fallbacks |
 | `font-zoom` | `AppearanceHook` | Font size state and zoom operations (no key bindings) |
 | `shortcuts` | — | Bind custom key combinations to callbacks |
-| `herdr` | `AppearanceHook`, `InputHook`, `LayoutHook`, `SpaceHook` | Spaces sidebar, tabs, live process detection, resizable layout, wallpaper accent colour |
+| `herdr` | `AppearanceHook`, `InputHook`, `LayoutHook`, `SpaceHook` | Spaces sidebar, tabs, live process detection, per-session agent state, resizable layout, wallpaper accent colour |
 | `close-guard` | `LifecycleHook` | Asks for confirmation before closing with running processes |
 
 See the [plugins repository](https://github.com/loonbac/port-plugins) for

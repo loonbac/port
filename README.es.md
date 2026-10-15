@@ -236,6 +236,28 @@ impl Plugin for MiPlugin {
 Hooks disponibles: `AppearanceHook`, `InputHook`, `LayoutHook`, `SpaceHook`,
 `SpaceHook` y `LifecycleHook`.
 
+### Estado de agente por sesión
+
+El núcleo detecta si en una sesión corre un agente de IA y en qué estado
+está (`Unknown`, `Idle`, `Working`, `Blocked`, con marca de visto),
+combinando el estado que anuncia el propio programa (OSC 7501), patrones de
+su salida (manifiestos) y la actividad del PTY. Cualquier plugin en el
+proceso puede consumirlo con un método de `SpaceHook`:
+
+```rust
+use port_plugin_api::{AgentState, SpaceHook};
+
+impl SpaceHook for MiPlugin {
+    fn update_session_agent(&self, session_id: usize, state: AgentState, seen: bool) {
+        // `seen == false` junto a `Blocked` o `Idle` significa
+        // «pide algo o terminó y aún no se miró».
+    }
+}
+```
+
+El núcleo avisa solo cuando cambia; el plugin guarda y dibuja. La terminal
+sigue siendo simple y cada plugin decide qué mostrar.
+
 ### Independiente, cuando no lo necesitas
 
 Un plugin que solo ajusta valores, responde a atajos o veta el cierre no
@@ -317,7 +339,7 @@ forma independiente.
 | `font` | `AppearanceHook` | Familia, tamaño y fuentes de respaldo |
 | `font-zoom` | `AppearanceHook` | Estado del tamaño de fuente y operaciones de zoom (sin atajos) |
 | `shortcuts` | — | Asocia combinaciones de teclas a callbacks |
-| `herdr` | `AppearanceHook`, `InputHook`, `LayoutHook`, `SpaceHook` | Barra lateral de espacios, pestañas, detección de procesos en vivo, ancho ajustable y color acento del wallpaper |
+| `herdr` | `AppearanceHook`, `InputHook`, `LayoutHook`, `SpaceHook` | Barra lateral de espacios, pestañas, detección de procesos en vivo, estado de agentes por sesión, ancho ajustable y color acento del wallpaper |
 | `close-guard` | `LifecycleHook` | Pide confirmación antes de cerrar si hay procesos corriendo |
 
 Consulta el [repositorio de plugins](https://github.com/loonbac/port-plugins) para
