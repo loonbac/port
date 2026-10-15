@@ -9,10 +9,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use gpui::AnyElement;
-use port_term_core::frame::Rgb;
+use port_term_core::frame::{Frame, Rgb};
 use port_term_core::input::Key;
 use port_term_core::pty::{PtyConfig, RunningApp};
-use port_term_core::session::MousePolicy;
+use port_term_core::session::{GridSize, MousePolicy};
 
 use crate::config::PluginConfig;
 use crate::services::Service;
@@ -178,6 +178,34 @@ pub trait SpaceHook {
     /// Notifica el estado de agente de una sesión. Se invoca sólo cuando cambia.
     fn update_session_agent(&self, session_id: usize, state: AgentState, seen: bool) {
         let _ = (session_id, state, seen);
+    }
+
+    /// Sesiones cuya rejilla el plugin necesita ver.
+    ///
+    /// El anfitrión entrega la rejilla de cada una por
+    /// [`SpaceHook::update_session_frame`]. Se declara interés en vez de empujar
+    /// la de todas: un cliente remoto mira unas pocas sesiones, no el conjunto.
+    fn watched_sessions(&self) -> Vec<usize> {
+        Vec::new()
+    }
+
+    /// Entrega la rejilla de una sesión que el plugin declaró querer ver.
+    fn update_session_frame(&self, session_id: usize, frame: &Frame) {
+        let _ = (session_id, frame);
+    }
+
+    /// Entrada que el plugin quiere inyectar en una sesión.
+    ///
+    /// Se drena en cada cuadro: lo que el plugin devuelve se escribe en la
+    /// sesión y se olvida. Es la vía para que un teclado que no es el de la
+    /// ventana —uno remoto— escriba en una sesión concreta.
+    fn take_session_input(&self) -> Vec<(usize, Vec<u8>)> {
+        Vec::new()
+    }
+
+    /// Redimensiones que el plugin pide para una sesión.
+    fn take_session_resize(&self) -> Vec<(usize, GridSize)> {
+        Vec::new()
     }
 
     /// Variables de entorno que el plugin suma a cada sesión nueva.

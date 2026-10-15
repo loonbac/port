@@ -1,12 +1,14 @@
 //! Invocación de hooks: apariencia, entrada, layout y peticiones de sesión.
 
 use std::cell::Cell;
+use std::sync::{Arc, Mutex};
 
 use gpui::{div, Element};
 use port_plugin_api::{KeyAction, LayoutHook, Plugin, PluginRegistry, SpaceHook};
-use port_term_core::frame::Rgb;
+use port_term_core::frame::{Frame, Rgb};
 use port_term_core::input::Key;
 use port_term_core::pty::PtyConfig;
+use port_term_core::session::GridSize;
 
 use crate::{MockFontPlugin, MockShortcutPlugin, MockTintPlugin, MockTransparencyPlugin};
 
@@ -276,5 +278,138 @@ fn host_preserves_active_session_when_registry_returns_none() {
         session_mgr.active_index(),
         1,
         "la sesión activa en pantalla debe mantenerse en 1 y no saltar a la sesión 0"
+    );
+}
+
+/// Plugin de prueba que pide ver unas sesiones y escribe en otras.
+///
+/// Guarda lo recibido en `Arc` porque el registro pasa a ser dueño del plugin:
+/// la prueba conserva el mango para poder comprobarlo después.
+struct MockSessionPlugin {
+    watched: Vec<usize>,
+    seen: VistosSesion,
+    entrada: EntradaPendiente,
+    redimension: RedimensionPendiente,
+}
+
+impl SpaceHook for MockSessionPlugin {
+    fn watched_sessions(&self) -> Vec<usize> {
+        self.watched.clone()
+    }
+
+    fn update_session_frame(&self, session_id: usize, frame: &Frame) {
+        self.seen.lock().unwrap().push((session_id, frame.columns));
+    }
+
+    fn take_session_input(&self) -> Vec<(usize, Vec<u8>)> {
+        std::mem::take(&mut self.entrada.lock().unwrap())
+    }
+
+    fn take_session_resize(&self) -> Vec<(usize, GridSize)> {
+        std::mem::take(&mut self.redimension.lock().unwrap())
+    }
+}
+
+impl Plugin for MockSessionPlugin {
+    fn id(&self) -> &'static str {
+        "sessions"
+    }
+
+    fn name(&self) -> &'static str {
+        "Mock Sessions"
+    }
+
+    fn space_hook(&self) -> Option<&dyn SpaceHook> {
+        Some(self)
+    }
+}
+
+/// Pares (sesión, columnas) que un plugin de prueba dice haber recibido.
+type VistosSesion = Arc<Mutex<Vec<(usize, usize)>>>;
+/// Entrada pendiente de un plugin de prueba: pares (sesión, bytes).
+type EntradaPendiente = Arc<Mutex<Vec<(usize, Vec<u8>)>>>;
+/// Redimensiones pendientes de un plugin de prueba: pares (sesión, tamaño).
+type RedimensionPendiente = Arc<Mutex<Vec<(usize, GridSize)>>>;
+
+/// Plugin que pide ver `watched`, con lo recibido en el mango dado.
+fn mock_sesiones(watched: Vec<usize>, visto: VistosSesion) -> MockSessionPlugin {
+    MockSessionPlugin {
+        watched,
+        seen: visto,
+        entrada: Arc::new(Mutex::new(Vec::new())),
+        redimension: Arc::new(Mutex::new(Vec::new())),
+    }
+}
+
+/// Cuadro mínimo para probar la entrega, sin rejilla real.
+fn cuadro_de(columnas: usize) -> Frame {
+    Frame {
+        rows: Vec::new(),
+        columns: columnas,
+        cursor: None,
+        cursor_run: None,
+        display_offset: 0,
+    }
+}
+
+/// La rejilla se entrega a quien la pidió, y los pedidos no se repiten.
+#[test]
+fn la_rejilla_llega_a_quien_la_pidio() {
+    let visto = Arc::new(Mutex::new(Vec::new()));
+    let mut registro = PluginRegistry::new();
+    registro.register(mock_sesiones(vec![7], visto.clone()));
+    registro.register(mock_sesiones(vec![7], Arc::new(Mutex::new(Vec::new()))));
+
+    assert_eq!(
+        registro.watched_sessions(),
+        vec![7],
+        "dos plugins que piden la misma sesión no la repiten"
+    );
+
+    registro.update_session_frame(7, &cuadro_de(120));
+
+    assert_eq!(*visto.lock().unwrap(), vec![(7, 120)]);
+}
+
+/// Una sesión que nadie pidió no se le entrega a nadie.
+#[test]
+fn una_sesion_no_pedida_no_se_entrega() {
+    let visto = Arc::new(Mutex::new(Vec::new()));
+    let mut registro = PluginRegistry::new();
+    registro.register(mock_sesiones(vec![7], visto.clone()));
+
+    registro.update_session_frame(99, &cuadro_de(80));
+
+    assert!(
+        visto.lock().unwrap().is_empty(),
+        "recibió una rejilla que no pidió"
+    );
+}
+
+/// La entrada y la redimensión se drenan una sola vez.
+#[test]
+fn la_entrada_se_drena_una_vez() {
+    let plugin = mock_sesiones(vec![], Arc::new(Mutex::new(Vec::new())));
+    plugin.entrada.lock().unwrap().push((7, b"ls\n".to_vec()));
+    plugin
+        .redimension
+        .lock()
+        .unwrap()
+        .push((7, GridSize::new(100, 30)));
+    let mut registro = PluginRegistry::new();
+    registro.register(plugin);
+
+    assert_eq!(registro.take_session_input(), vec![(7, b"ls\n".to_vec())]);
+    assert!(
+        registro.take_session_input().is_empty(),
+        "la entrada se entregó dos veces"
+    );
+    assert_eq!(
+        registro.take_session_resize(),
+        vec![(7, GridSize::new(100, 30))]
+    );
+    assert!(
+        registro.take_session_resize().is_empty(),
+        "la redimensión se entregó dos veces"
     );
 }

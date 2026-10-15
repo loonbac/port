@@ -13,9 +13,10 @@
 use std::path::Path;
 
 use gpui::AnyElement;
-use port_term_core::frame::Rgb;
+use port_term_core::frame::{Frame, Rgb};
 use port_term_core::input::Key;
 use port_term_core::pty::{PtyConfig, RunningApp};
+use port_term_core::session::GridSize;
 use port_term_core::session::MousePolicy;
 
 use crate::hooks::{AgentState, CloseDecision, KeyAction};
@@ -351,6 +352,71 @@ impl PluginRegistry {
                 }
             });
         }
+    }
+
+    /// Sesiones que algún plugin activo quiere ver, sin repetir.
+    pub fn watched_sessions(&self) -> Vec<usize> {
+        let mut watched: Vec<usize> = Vec::new();
+        for entry in &self.plugins {
+            let ids = entry.invoke_hook(self.hook_budget, Vec::new(), || {
+                entry
+                    .plugin
+                    .space_hook()
+                    .map(|hook| hook.watched_sessions())
+                    .unwrap_or_default()
+            });
+            for id in ids {
+                if !watched.contains(&id) {
+                    watched.push(id);
+                }
+            }
+        }
+        watched
+    }
+
+    /// Entrega la rejilla a cada plugin que declaró querer ver esa sesión.
+    pub fn update_session_frame(&self, session_id: usize, frame: &Frame) {
+        for entry in &self.plugins {
+            entry.invoke_hook(self.hook_budget, (), || {
+                if let Some(hook) = entry.plugin.space_hook() {
+                    if hook.watched_sessions().contains(&session_id) {
+                        hook.update_session_frame(session_id, frame);
+                    }
+                }
+            });
+        }
+    }
+
+    /// Entrada que los plugins quieren inyectar, en orden de registro.
+    pub fn take_session_input(&self) -> Vec<(usize, Vec<u8>)> {
+        let mut pending: Vec<(usize, Vec<u8>)> = Vec::new();
+        for entry in &self.plugins {
+            let chunks = entry.invoke_hook(self.hook_budget, Vec::new(), || {
+                entry
+                    .plugin
+                    .space_hook()
+                    .map(|hook| hook.take_session_input())
+                    .unwrap_or_default()
+            });
+            pending.extend(chunks);
+        }
+        pending
+    }
+
+    /// Redimensiones que los plugins piden, en orden de registro.
+    pub fn take_session_resize(&self) -> Vec<(usize, GridSize)> {
+        let mut pending: Vec<(usize, GridSize)> = Vec::new();
+        for entry in &self.plugins {
+            let sizes = entry.invoke_hook(self.hook_budget, Vec::new(), || {
+                entry
+                    .plugin
+                    .space_hook()
+                    .map(|hook| hook.take_session_resize())
+                    .unwrap_or_default()
+            });
+            pending.extend(sizes);
+        }
+        pending
     }
 
     /// Entorno que los plugins suman a cada sesión nueva, en orden de registro.

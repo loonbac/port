@@ -156,6 +156,22 @@ impl SessionManager {
             .expect("sesión activa")
     }
 
+    /// Referencia a una sesión por su identificador.
+    ///
+    /// Existe para que un plugin pueda mirar una sesión que no es la activa sin
+    /// mover el foco de la ventana.
+    pub fn session(&self, id: usize) -> Option<&Session> {
+        self.sessions.get(&id)
+    }
+
+    /// Referencia mutable a una sesión por su identificador.
+    ///
+    /// Es la vía por la que un teclado que no es el de la ventana —uno remoto—
+    /// escribe en su propia sesión sin cambiar cuál está en pantalla.
+    pub fn session_mut(&mut self, id: usize) -> Option<&mut Session> {
+        self.sessions.get_mut(&id)
+    }
+
     /// ID de la sesión activa actual.
     pub fn active_id(&self) -> usize {
         self.active_id

@@ -213,6 +213,28 @@ impl Render for TerminalView {
             plugins.update_session_agent(id, state, seen);
         }
 
+        // Entrega la rejilla a quien la pidió y aplica lo que pida a cambio.
+        //
+        // El orden importa: primero se entrega lo que hay en pantalla y después
+        // se aplica la entrada, así quien escribe desde lejos ve el efecto de
+        // sus teclas en el cuadro siguiente y no en el mismo en que las mandó.
+        for id in plugins.watched_sessions() {
+            if let Some(session) = session_mgr.session(id) {
+                let frame = session.frame();
+                plugins.update_session_frame(id, &frame);
+            }
+        }
+        for (id, bytes) in plugins.take_session_input() {
+            if let Some(session) = session_mgr.session_mut(id) {
+                let _ = session.write(&bytes);
+            }
+        }
+        for (id, size) in plugins.take_session_resize() {
+            if let Some(session) = session_mgr.session_mut(id) {
+                let _ = session.resize(size);
+            }
+        }
+
         // Retira las sesiones cuyo shell terminó (por ejemplo, tras `exit`) y
         // avisa a los plugins para quelimpien sus pestañas y espacios.
         let exited = session_mgr.reap_exited();
