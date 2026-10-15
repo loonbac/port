@@ -4,6 +4,7 @@
 //! inicial de la ventana y se entrega la vista.
 
 mod agent;
+mod agent_manifest;
 #[rustfmt::skip]
 mod app;
 

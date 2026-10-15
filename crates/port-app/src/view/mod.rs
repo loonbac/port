@@ -27,7 +27,9 @@ use port_plugin_api::PluginRegistry;
 use port_term_core::frame::Rgb;
 use port_term_core::session::{MouseButton as TerminalMouseButton, SessionManager};
 
-use crate::agent::{is_known_agent, AgentTracker, SessionSignals};
+use crate::agent::{
+    is_known_agent, manifest_id_for_bin, AgentTracker, ScreenSignals, SessionSignals,
+};
 use crate::metrics::Metrics;
 
 use close_prompt::render_close_prompt;
@@ -157,8 +159,9 @@ impl Render for TerminalView {
         for (&id, session) in session_mgr.sessions().iter() {
             let app = session.foreground_app();
             plugins.update_session_app(id, app.as_ref());
+            let manifest_id = app.as_ref().and_then(|a| manifest_id_for_bin(&a.bin));
             let known = app.as_ref().is_some_and(|a| is_known_agent(&a.bin));
-            known_agents.push((id, known));
+            known_agents.push((id, known, manifest_id));
         }
 
         session_mgr.pump();
@@ -166,23 +169,44 @@ impl Render for TerminalView {
         // Rastreo de estado de agente por sesión y notificación de cambios a plugins
         let now = std::time::Instant::now();
         let active_id = session_mgr.active_id();
-        let signals = known_agents.into_iter().filter_map(|(id, known_agent)| {
-            let session = session_mgr.sessions().get(&id)?;
-            let program_state = session.program_status().and_then(|st| st.state.clone());
-            let output_seq = session.output_seq();
-            Some((
-                id,
-                SessionSignals {
-                    program_state,
-                    output_seq,
-                    known_agent,
-                },
-            ))
-        });
+        let tracker = self.agent_tracker.borrow();
+        let signals = known_agents
+            .into_iter()
+            .filter_map(|(id, known_agent, manifest_id)| {
+                let session = session_mgr.sessions().get(&id)?;
+                let program_state = session.program_status().and_then(|st| st.state.clone());
+                let output_seq = session.output_seq();
+                let screen = if let Some(agent_id) = manifest_id {
+                    if tracker.is_manifest_due(id, output_seq, now) {
+                        Some(ScreenSignals {
+                            screen: session.screen_tail(80),
+                            osc_title: session.osc_title().to_string(),
+                            osc_progress: session.osc_progress().to_string(),
+                            agent_id: agent_id.to_string(),
+                        })
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                Some((
+                    id,
+                    SessionSignals {
+                        program_state,
+                        output_seq,
+                        known_agent,
+                        screen,
+                    },
+                ))
+            })
+            .collect::<Vec<_>>();
+        drop(tracker);
+
         let changes = self
             .agent_tracker
             .borrow_mut()
-            .update(signals, active_id, now);
+            .update(signals.into_iter(), active_id, now);
         for (id, state, seen) in changes {
             plugins.update_session_agent(id, state, seen);
         }

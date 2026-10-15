@@ -19,3 +19,9 @@ port-plugin-herdr = { workspace = true }
 # La politica de raton y seleccion tambien es in-process: la UI la lee en cada
 # gesto sin cruzar el protocolo de los plugins de tienda.
 port-plugin-selection = { workspace = true }
+# Detección de estado de agentes sin OSC (manifiestos herdr, T3): `regex` para
+# las reglas, `toml` + `serde` para cargarlos. Ya están fijados en el lock del
+# workspace; no entra ningún paquete nuevo.
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
