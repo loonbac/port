@@ -22,7 +22,15 @@
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
-  outputs = { self, nixpkgs }:
+  # Los plugins viven en su propio repositorio. Se traen como fuente (no como
+  # flake) porque PORT no los consume como paquete, pero sí tiene que construir
+  # e instalar el ejecutable compatible junto a su propio binario.
+  inputs.port-plugins = {
+    url = "github:loonbac/port-plugins";
+    flake = false;
+  };
+
+  outputs = { self, nixpkgs, port-plugins }:
     let
       lib = (import nixpkgs { system = "x86_64-linux"; }).lib;
 
@@ -56,6 +64,30 @@
           # el `toString` en cada rama.
           libPaths = lib.concatMapStringsSep ":" (p: "${p}/lib") runtimeLibs;
           libNames = lib.concatMapStringsSep " " (p: toString p) runtimeLibs;
+
+          # Ejecutable compatible con la CLI de herdr. Lo llama la aplicación
+          # que corre dentro de un panel, así que tiene que quedar junto al
+          # binario de PORT: el plugin lo busca ahí primero y de ese modo la
+          # intercepción no depende del `PATH` de quien arranca la terminal.
+          portHerdr = pkgs.rustPlatform.buildRustPackage {
+            pname = "port-herdr";
+            version = "0.1.0";
+            # Sólo el crate, no el repositorio entero: el vendorizado es una
+            # derivación de salida fija y lee el `Cargo.lock` que encuentra en la
+            # raíz de la fuente. Con el repositorio completo leía el lock del
+            # workspace, que arrastra dependencias git (y con ellas git, curl y
+            # hasta gmp en el cierre), y Nix rechazaba la derivación por
+            # referenciar rutas del store. Este crate tiene su propio lock, sin
+            # más dependencia que serde_json.
+            src = "${port-plugins}/plugins/herdr-cli";
+            cargoHash = "sha256-tbnx+2iqoy1gIRojEOaSBWtCpHKytB9I8c0J6VZcEQ0=";
+            meta = {
+              description = "Compatible herdr CLI that reports panel state to PORT";
+              license = lib.licenses.mit;
+              mainProgram = "port-herdr";
+              platforms = lib.platforms.unix;
+            };
+          };
 
           port = pkgs.rustPlatform.buildRustPackage {
             pname = "port";
@@ -109,6 +141,7 @@
             };
 
             postInstall = ''
+              install -Dm755 ${portHerdr}/bin/port-herdr $out/bin/port-herdr
               install -Dm644 assets/port.desktop $out/share/applications/port.desktop
               install -Dm644 assets/icon-256.png $out/share/icons/hicolor/256x256/apps/port-terminal.png
               install -Dm644 assets/icon-256.png $out/share/icons/hicolor/256x256/apps/port.png
@@ -164,6 +197,7 @@
         in
         {
           inherit port;
+          port-herdr = portHerdr;
           default = port;
         });
 

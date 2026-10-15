@@ -16,9 +16,26 @@
         "type": "github"
       }
     },
+    "port-plugins": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1792046388,
+        "narHash": "sha256-9qPQL8U5PyrvwL6quX23VMpYl854qSVl5T/hM6CAQ3U=",
+        "owner": "loonbac",
+        "repo": "port-plugins",
+        "rev": "abdae109e7298d0ec373104b81ce3463d9e4e253",
+        "type": "github"
+      },
+      "original": {
+        "owner": "loonbac",
+        "repo": "port-plugins",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs",
+        "port-plugins": "port-plugins"
       }
     }
   },
