@@ -64,6 +64,24 @@ fn non_sixel_dcs_reaches_plain_byte_for_byte() {
     assert_eq!(scanner.pending_len(), 0);
 }
 
+/// `fish` consulta capacidades del terminal con XTGETTCAP, que es un DCS con
+/// el parametro `+q`. No es un Sixel: sus parametros no son numeros, y tomarlo
+/// por una imagen producia rectangulos negros donde el programa solo preguntaba.
+#[test]
+fn xtgettcap_dcs_is_not_decoded_as_sixel() {
+    let mut scanner = Scanner::new();
+    let fixture = b"\x1bP+q696e646e\x1b\\";
+
+    let scan = scanner.advance(fixture);
+
+    assert!(
+        scan.events.is_empty(),
+        "una consulta XTGETTCAP no puede producir una imagen"
+    );
+    assert_eq!(scan.plain, fixture);
+    assert_eq!(scanner.pending_len(), 0);
+}
+
 #[test]
 fn kitty_apc_reported_with_payload_including_leading_g_without_st() {
     let mut scanner = Scanner::new();

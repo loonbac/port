@@ -215,8 +215,13 @@ fn parse_sixel_dcs(dcs_bytes: &[u8]) -> Option<&[u8]> {
         return None;
     }
     let inner = &dcs_bytes[2..dcs_bytes.len() - 2];
+    // Los parametros de un Sixel son numeros separados por punto y coma. Aceptar
+    // todo el rango 0x20..=0x3f daba por imagen cualquier DCS que contuviera una
+    // letra q, y ahi caen consultas como XTGETTCAP (ESC P + q ...), que los
+    // shells envian al arrancar: se decodificaba basura y quedaba un rectangulo
+    // negro donde el programa solo preguntaba por una capacidad.
     let mut idx = 0;
-    while idx < inner.len() && (0x20..=0x3f).contains(&inner[idx]) {
+    while idx < inner.len() && (inner[idx].is_ascii_digit() || inner[idx] == b';') {
         idx += 1;
     }
     if idx < inner.len() && inner[idx] == b'q' {
