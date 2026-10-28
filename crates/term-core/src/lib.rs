@@ -16,6 +16,7 @@
 //!   nombre del ejecutable) aislando las diferencias entre sistemas.
 
 pub mod frame;
+pub mod graphics;
 pub mod input;
 pub mod program_status;
 pub mod pty;
