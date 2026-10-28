@@ -15,7 +15,7 @@ use gpui::{
     fill, point, px, rgb, size, App, Bounds, Font, FontFallbacks, FontStyle, FontWeight, Pixels,
     TextRun, Window,
 };
-use port_term_core::frame::{Frame, PlacedImage, Rgb, Run, Style};
+use port_term_core::frame::{Frame, PlacedImage, Rgb, Row, Run, Style};
 use port_term_core::session::MousePolicy;
 
 use crate::metrics::Metrics;
@@ -30,6 +30,7 @@ pub(crate) fn paint_frame(
     policy: MousePolicy,
     metrics: &Metrics,
     default_bg: Rgb,
+    opacity: f32,
     font_family: &str,
     font_size_f32: f32,
     font_fallbacks: &[String],
@@ -75,15 +76,74 @@ pub(crate) fn paint_frame(
     // fondo junto a sus glifos, el fondo de la celda de la derecha y el de la
     // fila de abajo recortarían la tinta que sobresale. Con las dos pasadas
     // separadas los glifos quedan encima de todos los fondos.
+    //
+    // El margen alrededor de la rejilla se pinta antes y por separado: la rejilla
+    // la cubren los fondos de las celdas, y si el margen quedara debajo de ellos
+    // cada celda sumaría una capa más de alpha y volvería el rectángulo opaco.
+    let grid_width = cell_width * frame.columns as f32;
+    let grid_height = cell_height * frame.rows.len() as f32;
+    let grid_right = origin_x + grid_width;
+    let grid_bottom = origin_y + grid_height;
+    let base = cell_background(default_bg, opacity);
+
+    paint_padding(
+        window,
+        bounds.origin.x,
+        bounds.origin.y,
+        bounds.size.width,
+        origin_y - bounds.origin.y,
+        base,
+    );
+    paint_padding(
+        window,
+        bounds.origin.x,
+        grid_bottom,
+        bounds.size.width,
+        bounds.origin.y + bounds.size.height - grid_bottom,
+        base,
+    );
+    paint_padding(
+        window,
+        bounds.origin.x,
+        origin_y,
+        origin_x - bounds.origin.x,
+        grid_height,
+        base,
+    );
+    paint_padding(
+        window,
+        grid_right,
+        origin_y,
+        bounds.origin.x + bounds.size.width - grid_right,
+        grid_height,
+        base,
+    );
+
     for (row_index, row) in frame.rows.iter().enumerate() {
         let top = origin_y + cell_height * row_index as f32;
-        let mut left = origin_x;
 
-        // El resaltado va antes que los runs de la fila: el fondo y los glifos
-        // se pintan encima y el texto sigue legible sobre el color translúcido.
-        // El color y la opacidad salen de la política de la sesión; el default
-        // documentado en `MousePolicy::default()` es el único que fija los
-        // valores de fábrica.
+        // Los fondos cubren la fila entera, columnas vacías incluidas: cada
+        // píxel recibe una sola capa translúcida y la transparencia queda igual
+        // en toda la ventana.
+        let cursor_run = frame
+            .cursor_run
+            .filter(|cursor| cursor.row == row_index)
+            .map(|cursor| cursor.run_index);
+
+        for (start, end, bg) in row_background_segments(row, frame.columns, default_bg, cursor_run)
+        {
+            let x = origin_x + cell_width * start as f32;
+            let width = cell_width * (end - start) as f32;
+            window.paint_quad(fill(
+                Bounds::new(point(x, top), size(width, cell_height)),
+                cell_background(bg, opacity),
+            ));
+        }
+
+        // El resaltado va sobre el fondo de la fila y bajo los glifos: el texto
+        // sigue legible sobre el color translúcido. El color y la opacidad salen
+        // de la política de la sesión; el default documentado en
+        // `MousePolicy::default()` es el único que fija los valores de fábrica.
         if let Some(span) = row.selection {
             let selected_x = origin_x + cell_width * span.start as f32;
             let selected_width = cell_width * (span.end.saturating_sub(span.start) + 1) as f32;
@@ -91,25 +151,6 @@ pub(crate) fn paint_frame(
                 Bounds::new(point(selected_x, top), size(selected_width, cell_height)),
                 color(policy.highlight).opacity(policy.highlight_opacity),
             ));
-        }
-
-        for (run_index, run) in row.runs.iter().enumerate() {
-            let is_cursor = frame
-                .cursor_run
-                .is_some_and(|cursor| cursor.row == row_index && cursor.run_index == run_index);
-            let style = style_of(run, is_cursor);
-            let width = cell_width * run.columns as f32;
-
-            // Si el color coincide con el fondo por defecto y no es el cursor,
-            // dejamos que se vea el fondo del contenedor principal (con su opacidad).
-            if style.bg != default_bg || is_cursor {
-                window.paint_quad(fill(
-                    Bounds::new(point(left, top), size(width, cell_height)),
-                    color(style.bg),
-                ));
-            }
-
-            left += width;
         }
     }
 
@@ -557,7 +598,193 @@ fn style_of(run: &Run, is_cursor: bool) -> Style {
     }
 }
 
+/// Fondos de una fila como segmentos disjuntos que cubren todas las columnas.
+///
+/// La ventana es translúcida y el alpha no se reemplaza, se compone: lo que se
+/// pinta sobre un fondo ya translúcido queda más opaco que el resto. Para que
+/// toda la superficie tenga la misma transparencia, cada píxel debe recibir una
+/// sola capa; por eso los fondos cubren la fila completa, sin huecos ni
+/// solapes, y lo que ningún run ocupa se rellena con el fondo del tema.
+fn row_background_segments(
+    row: &Row,
+    columns: usize,
+    default_bg: Rgb,
+    cursor_run: Option<usize>,
+) -> Vec<(usize, usize, Rgb)> {
+    let mut segments: Vec<(usize, usize, Rgb)> = Vec::new();
+    let mut column = 0usize;
+
+    for (run_index, run) in row.runs.iter().enumerate() {
+        let end = (column + run.columns).min(columns);
+        if end > column {
+            let style = style_of(run, cursor_run == Some(run_index));
+            push_segment(&mut segments, column, end, style.bg);
+        }
+        column = end;
+    }
+
+    if column < columns {
+        push_segment(&mut segments, column, columns, default_bg);
+    }
+    segments
+}
+
+/// Añade un segmento, fusionándolo con el anterior si comparten color y son
+/// contiguos: menos quads por fila y la misma cobertura.
+fn push_segment(segments: &mut Vec<(usize, usize, Rgb)>, start: usize, end: usize, bg: Rgb) {
+    if end <= start {
+        return;
+    }
+    if let Some(last) = segments.last_mut() {
+        if last.2 == bg && last.1 == start {
+            last.1 = end;
+            return;
+        }
+    }
+    segments.push((start, end, bg));
+}
+
+/// Única capa de fondo de una celda, con la opacidad de la ventana.
+///
+/// La ventana es translúcida y el alpha no reemplaza, se compone: una celda
+/// pintada sobre un fondo ya translúcido queda más opaca que el resto, que es
+/// justo el rectángulo negro que se veía. Por eso aquí toda celda pinta su
+/// fondo —también la que usa el del tema— y ninguna se apoya en el contenedor.
+fn cell_background(style_bg: Rgb, opacity: f32) -> gpui::Hsla {
+    color(style_bg).opacity(opacity)
+}
+
+/// Pinta una franja del área de la rejilla que ningún renglón ocupa.
+fn paint_padding(
+    window: &mut Window,
+    x: Pixels,
+    y: Pixels,
+    width: Pixels,
+    height: Pixels,
+    background: gpui::Hsla,
+) {
+    if width <= px(0.0) || height <= px(0.0) {
+        return;
+    }
+    window.paint_quad(fill(
+        Bounds::new(point(x, y), size(width, height)),
+        background,
+    ));
+}
+
 pub(crate) fn color(rgb_value: Rgb) -> gpui::Hsla {
     let packed = (rgb_value.r as u32) << 16 | (rgb_value.g as u32) << 8 | (rgb_value.b as u32);
     rgb(packed).into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Fondo del tema: el mismo valor que `Rgb::DEFAULT_BG`.
+    const THEME_BG: Rgb = Rgb::new(0x0d, 0x11, 0x17);
+    /// Fondo que un programa puede pedir por su cuenta y que no es el del tema.
+    const PROGRAM_BG: Rgb = Rgb::new(0x00, 0x00, 0x00);
+
+    fn run(text: &str, columns: usize, bg: Rgb) -> Run {
+        Run {
+            text: text.to_string(),
+            style: Style {
+                bg,
+                ..Style::plain()
+            },
+            columns,
+        }
+    }
+
+    /// Columnas cubiertas por una lista de segmentos, con sus solapes contados.
+    fn coverage(segments: &[(usize, usize, Rgb)], columns: usize) -> Vec<usize> {
+        let mut hits = vec![0usize; columns];
+        for (start, end, _) in segments {
+            for hit in hits.iter_mut().take(*end).skip(*start) {
+                *hit += 1;
+            }
+        }
+        hits
+    }
+
+    #[test]
+    fn row_segments_cover_every_column_exactly_once() {
+        // Tres tramos de cinco columnas en una terminal de veinte: quedan cinco
+        // columnas libres al final, que tambien necesitan su capa de fondo o la
+        // ventana se veria translucida a distinto nivel en la misma fila.
+        let row = Row {
+            runs: vec![
+                run("hola", 5, PROGRAM_BG),
+                run("mundo", 5, THEME_BG),
+                run("fin", 5, PROGRAM_BG),
+            ],
+            selection: None,
+        };
+
+        let segments = row_background_segments(&row, 20, THEME_BG, None);
+
+        let hits = coverage(&segments, 20);
+        assert!(
+            hits.iter().all(|hits| *hits == 1),
+            "cada columna debe recibir exactamente una capa, y el conteo es {hits:?}"
+        );
+    }
+
+    #[test]
+    fn the_columns_no_run_occupies_use_the_theme_background() {
+        let row = Row {
+            runs: vec![run("hola", 5, PROGRAM_BG)],
+            selection: None,
+        };
+
+        let segments = row_background_segments(&row, 8, THEME_BG, None);
+
+        assert_eq!(segments, vec![(0, 5, PROGRAM_BG), (5, 8, THEME_BG)]);
+    }
+
+    #[test]
+    fn neighbouring_runs_with_the_same_background_share_one_layer() {
+        let row = Row {
+            runs: vec![run("hola", 5, PROGRAM_BG), run("mundo", 5, PROGRAM_BG)],
+            selection: None,
+        };
+
+        let segments = row_background_segments(&row, 10, THEME_BG, None);
+
+        assert_eq!(segments, vec![(0, 10, PROGRAM_BG)]);
+    }
+
+    #[test]
+    fn the_cursor_run_uses_the_inverted_background() {
+        // El cursor es un bloque: invierte el par de colores, asi que su fondo
+        // es el del texto y no el de la celda.
+        let row = Row {
+            runs: vec![run("ab", 2, THEME_BG), run("cd", 2, THEME_BG)],
+            selection: None,
+        };
+
+        let segments = row_background_segments(&row, 4, THEME_BG, Some(1));
+
+        assert_eq!(segments, vec![(0, 2, THEME_BG), (2, 4, Style::plain().fg),]);
+    }
+
+    #[test]
+    fn every_layer_carries_the_window_opacity() {
+        // Uniformidad: el fondo del tema y el que pide un programa se pintan con
+        // la misma opacidad, porque cada uno es la unica capa de su pixel.
+        for bg in [THEME_BG, PROGRAM_BG] {
+            let alpha = cell_background(bg, 0.85).a;
+            assert!(
+                (alpha - 0.85).abs() < 1e-6,
+                "el alpha deberia ser la opacidad de la ventana (0.85) y es {alpha}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_opaque_window_paints_opaque_cells() {
+        let bg = cell_background(PROGRAM_BG, 1.0);
+        assert!((bg.a - 1.0).abs() < 1e-6);
+    }
 }

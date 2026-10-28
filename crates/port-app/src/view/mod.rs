@@ -39,7 +39,7 @@ use mouse::{
     cell_at_pointer, cell_under_pointer, finish_drag, mouse_modifiers,
     selection_kind_for_click_count, starts_local_selection, terminal_button, wheel_lines,
 };
-use paint::{color, paint_frame};
+use paint::paint_frame;
 
 pub struct TerminalView {
     session_manager: Rc<RefCell<SessionManager>>,
@@ -97,7 +97,6 @@ impl Render for TerminalView {
         let plugins = self.plugins.borrow();
         let effective_bg = plugins.effective_background(self.background);
         let opacity = plugins.effective_opacity();
-        let root_bg = color(effective_bg).opacity(opacity);
 
         let font_family = plugins.effective_font_family("FiraCode Nerd Font Mono");
         let font_size = plugins.effective_font_size(self.metrics.font_size);
@@ -292,7 +291,8 @@ impl Render for TerminalView {
             .flex()
             .flex_row()
             .size_full()
-            .bg(root_bg)
+            // Sin fondo propio: la opacidad de la ventana la lleva cada capa
+            // que se pinta en `paint_frame`, y el contenedor sumaría otra.
             .track_focus(&self.focus_handle)
             // Clic en cualquier parte devuelve el foco a la rejilla.
             .on_mouse_down(MouseButton::Left, move |_event, window, _cx| {
@@ -546,6 +546,7 @@ impl Render for TerminalView {
                                 policy,
                                 &metrics,
                                 effective_bg,
+                                opacity,
                                 &font_family,
                                 font_size,
                                 &font_fallbacks,
