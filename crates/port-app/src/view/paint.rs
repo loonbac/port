@@ -30,6 +30,7 @@ pub(crate) fn paint_frame(
     policy: MousePolicy,
     metrics: &Metrics,
     default_bg: Rgb,
+    opacity: f32,
     font_family: &str,
     font_size_f32: f32,
     font_fallbacks: &[String],
@@ -100,12 +101,10 @@ pub(crate) fn paint_frame(
             let style = style_of(run, is_cursor);
             let width = cell_width * run.columns as f32;
 
-            // Si el color coincide con el fondo por defecto y no es el cursor,
-            // dejamos que se vea el fondo del contenedor principal (con su opacidad).
-            if style.bg != default_bg || is_cursor {
+            if let Some(background) = cell_background(style.bg, default_bg, is_cursor, opacity) {
                 window.paint_quad(fill(
                     Bounds::new(point(left, top), size(width, cell_height)),
-                    color(style.bg),
+                    background,
                 ));
             }
 
@@ -557,7 +556,66 @@ fn style_of(run: &Run, is_cursor: bool) -> Style {
     }
 }
 
+/// Fondo con el que debe pintarse una celda.
+///
+/// Devuelve `None` cuando el color coincide con el fondo de la ventana y no es
+/// el cursor: entonces no se pinta nada y se deja ver la transparencia del
+/// contenedor. Cuando sí se pinta, hereda la opacidad efectiva de la ventana,
+/// porque de lo contrario un programa que elige un fondo distinto al del tema
+/// —negro puro, por ejemplo— dibujaría rectángulos opacos sobre una ventana
+/// translúcida.
+fn cell_background(
+    style_bg: Rgb,
+    default_bg: Rgb,
+    is_cursor: bool,
+    opacity: f32,
+) -> Option<gpui::Hsla> {
+    if style_bg == default_bg && !is_cursor {
+        return None;
+    }
+    Some(color(style_bg).opacity(opacity))
+}
+
 pub(crate) fn color(rgb_value: Rgb) -> gpui::Hsla {
     let packed = (rgb_value.r as u32) << 16 | (rgb_value.g as u32) << 8 | (rgb_value.b as u32);
     rgb(packed).into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Fondo del tema: el mismo valor que `Rgb::DEFAULT_BG`.
+    const THEME_BG: Rgb = Rgb::new(0x0d, 0x11, 0x17);
+    /// Fondo que un programa puede pedir por su cuenta y que no es el del tema.
+    const PROGRAM_BG: Rgb = Rgb::new(0x00, 0x00, 0x00);
+
+    #[test]
+    fn a_cell_background_inherits_the_window_opacity() {
+        let bg = cell_background(PROGRAM_BG, THEME_BG, false, 0.85)
+            .expect("un fondo distinto al del tema se pinta");
+        assert!(
+            (bg.a - 0.85).abs() < 1e-6,
+            "el alpha deberia ser la opacidad de la ventana (0.85) y es {}",
+            bg.a
+        );
+    }
+
+    #[test]
+    fn the_theme_background_leaves_the_window_transparency_visible() {
+        assert!(cell_background(THEME_BG, THEME_BG, false, 0.85).is_none());
+    }
+
+    #[test]
+    fn the_cursor_is_painted_even_on_the_theme_background() {
+        let bg =
+            cell_background(THEME_BG, THEME_BG, true, 1.0).expect("el cursor siempre se pinta");
+        assert!((bg.a - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn an_opaque_window_paints_opaque_cells() {
+        let bg = cell_background(PROGRAM_BG, THEME_BG, false, 1.0).expect("se pinta");
+        assert!((bg.a - 1.0).abs() < 1e-6);
+    }
 }

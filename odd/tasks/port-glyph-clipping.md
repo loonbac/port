@@ -60,10 +60,14 @@ cell then lands on top of the neighbouring backgrounds instead of under them.
 - `cargo build -p port` — `target/debug/port` is newer than the edited source and
   `port --help` exits 0.
 
-## Not verified
+## Visual result
 
-The visual result in a running window. That still needs a human looking at PORT,
-which is the whole point of the change.
+**Confirmed by the user** on the workstation, with the installed binary
+(`/nix/store/j5v6l7fwd3v05r23rkj9s27ls9x9w2nr-port-0.1.10`, built from `95abcbf`): the
+framed glyph renders complete, with no clipping at the top. That closes the only item
+this document left open.
+
+What follows is the record of the earlier attempt, which could not observe it.
 
 An attempt was made on the workstation, which does run Wayland (`WAYLAND_DISPLAY=wayland-1`,
 `DISPLAY=:0`, compositor `niri`):
@@ -77,9 +81,9 @@ appear. The same happens with the installed binary from `/run/current-system/sw/
 and with `target/debug/port` without any override, so the black surface is a property
 of the capture path against a GPUI window, not a finding about this change.
 
-Conclusion: **the visual check is still open**, and it is not evidence against or in
-favour of the fix. Verify it by looking at PORT running the current build, with a
-character outside the cell, e.g. `printf '  ❀  |\n'` inside the prompt frame.
+Conclusion at the time: the capture path could not see the window, so it was evidence
+neither against nor in favour of the fix. The user's own look at the running build
+settled it afterwards, as described at the top of this section.
 
 ## Commit
 

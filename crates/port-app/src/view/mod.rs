@@ -546,6 +546,7 @@ impl Render for TerminalView {
                                 policy,
                                 &metrics,
                                 effective_bg,
+                                opacity,
                                 &font_family,
                                 font_size,
                                 &font_fallbacks,
