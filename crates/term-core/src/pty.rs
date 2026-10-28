@@ -7,12 +7,17 @@
 //! PTY es un descriptor bloqueante, así que leer desde el hilo de la UI la
 //! congelaría en cuanto el shell dejara de escribir. El hilo bloquea, y la UI
 //! solo recoge lo que ya está listo.
+//!
+//! Lo recogido vive en una cola acotada ([`MAX_PENDING_BYTES`]). El tope no es
+//! una optimización: sin él, un programa que escribe más rápido de lo que la UI
+//! pinta crece la memoria sin límite. Con tope, lo viejo se descarta y el final
+//! del flujo es lo que se ve, que es el comportamiento que hace usable
+//! `cat archivo-grande`.
 
 use std::cell::RefCell;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, TryRecvError};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 
@@ -54,7 +59,9 @@ pub struct Pty {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     child: Box<dyn Child + Send + Sync>,
-    incoming: Receiver<Vec<u8>>,
+    /// Salida ya leída del PTY y todavía sin parsear, acotada por
+    /// [`MAX_PENDING_BYTES`].
+    inbox: Arc<Mutex<Inbox>>,
     /// El hilo lector terminó: el otro extremo cerró el PTY.
     closed: Arc<AtomicBool>,
     /// Descriptor del maestro del PTY. Permite preguntar al núcleo qué grupo de
@@ -113,9 +120,10 @@ impl Pty {
             .take_writer()
             .map_err(|error| std::io::Error::other(error.to_string()))?;
 
-        let (sender, incoming) = mpsc::channel();
+        let inbox = Arc::new(Mutex::new(Inbox::default()));
         let closed = Arc::new(AtomicBool::new(false));
         let closed_for_thread = Arc::clone(&closed);
+        let inbox_for_thread = Arc::clone(&inbox);
         std::thread::Builder::new()
             .name("port-pty-reader".to_string())
             .spawn(move || {
@@ -124,9 +132,7 @@ impl Pty {
                     match reader.read(&mut buffer) {
                         Ok(0) => break,
                         Ok(read) => {
-                            if sender.send(buffer[..read].to_vec()).is_err() {
-                                break;
-                            }
+                            lock_inbox(&inbox_for_thread).push(&buffer[..read]);
                         }
                         Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
                         Err(_) => break,
@@ -142,33 +148,31 @@ impl Pty {
             master: pair.master,
             writer,
             child,
-            incoming,
+            inbox,
             closed,
             stable_app: RefCell::new(None),
             pending_app: RefCell::new((None, 0)),
         })
     }
 
-    /// Bytes ya disponibles. **Nunca bloquea**: si no hay nada, devuelve vacío.
-    pub fn try_read(&mut self) -> Vec<u8> {
-        let first = match self.incoming.try_recv() {
-            Ok(chunk) => chunk,
-            Err(TryRecvError::Empty | TryRecvError::Disconnected) => return Vec::new(),
-        };
+    /// Hasta `budget` bytes de salida ya disponibles.
+    ///
+    /// **Nunca bloquea**: si no hay nada, devuelve vacío. La cuota existe porque
+    /// la UI llama una vez por cuadro: entregar todo el atraso de golpe convierte
+    /// un diluvio de salida en una pausa de la interfaz. Lo que no entra en la
+    /// cuota se queda en la cola para el cuadro siguiente.
+    pub fn try_read(&mut self, budget: usize) -> Vec<u8> {
+        lock_inbox(&self.inbox).take(budget)
+    }
 
-        // Si solo hay un fragmento (el caso habitual), lo devolvemos directo
-        // sin asignar un segundo vector ni copiar bytes.
-        let second = match self.incoming.try_recv() {
-            Ok(chunk) => chunk,
-            Err(TryRecvError::Empty | TryRecvError::Disconnected) => return first,
-        };
+    /// Bytes que esperan en la cola sin parsear.
+    pub fn pending_bytes(&self) -> usize {
+        lock_inbox(&self.inbox).pending()
+    }
 
-        let mut bytes = first;
-        bytes.extend_from_slice(&second);
-        while let Ok(chunk) = self.incoming.try_recv() {
-            bytes.extend_from_slice(&chunk);
-        }
-        bytes
+    /// Bytes que el tope de la cola ha descartado desde el arranque.
+    pub fn dropped_bytes(&self) -> u64 {
+        lock_inbox(&self.inbox).dropped
     }
 
     pub fn write(&mut self, bytes: &[u8]) -> std::io::Result<()> {
@@ -302,6 +306,92 @@ fn is_in_group(pid: u32, group: Option<i32>) -> bool {
         None => true,
         Some(group) => sysinfo::process_group_of(pid) == Some(group),
     }
+}
+
+/// Cuánta salida del PTY se conserva sin parsear.
+///
+/// Cuatro MiB son varias pantallas de scrollback en el peor caso de texto denso,
+/// y una imagen sixel completa en el mejor. Por encima de eso, lo que llega
+/// tarde ya no se puede pintar: descartarlo es preferible a crecer sin límite.
+pub const MAX_PENDING_BYTES: usize = 4 * 1024 * 1024;
+
+/// Cola de salida sin parsear, acotada por [`MAX_PENDING_BYTES`].
+///
+/// Es un `Vec` lineal con un índice de cabeza, no un ring de bytes: empujar y
+/// tomar son memoria contigua (memcpy), sin recorrer el buffer byte a byte. La
+/// compactación se paga una vez cada varios MiB y no en cada lectura.
+#[derive(Default)]
+struct Inbox {
+    bytes: Vec<u8>,
+    /// Cuántos bytes del principio ya se entregaron o se descartaron.
+    head: usize,
+    /// Bytes que el tope descartó desde el arranque.
+    dropped: u64,
+}
+
+impl Inbox {
+    /// Bytes esperando ser entregados.
+    fn pending(&self) -> usize {
+        self.bytes.len() - self.head
+    }
+
+    /// Añade lo recién leído, descartando lo más viejo si hace falta.
+    fn push(&mut self, chunk: &[u8]) {
+        // Un trozo que por sí solo supera el tope reemplaza todo lo anterior: lo
+        // único que puede quedar es su final, que es lo más nuevo del flujo.
+        if chunk.len() >= MAX_PENDING_BYTES {
+            self.dropped += (self.pending() + chunk.len() - MAX_PENDING_BYTES) as u64;
+            self.bytes.clear();
+            self.head = 0;
+            self.bytes.extend_from_slice(&chunk[chunk.len() - MAX_PENDING_BYTES..]);
+            return;
+        }
+
+        let overflow = (self.pending() + chunk.len()).saturating_sub(MAX_PENDING_BYTES);
+        if overflow > 0 {
+            self.head += overflow;
+            self.dropped += overflow as u64;
+        }
+        self.bytes.extend_from_slice(chunk);
+        self.compact();
+    }
+
+    /// Retira hasta `budget` bytes, de lo más viejo a lo más nuevo.
+    fn take(&mut self, budget: usize) -> Vec<u8> {
+        let end = (self.head + budget).min(self.bytes.len());
+        let taken = self.bytes[self.head..end].to_vec();
+        self.head = end;
+        self.compact();
+        taken
+    }
+
+    /// Devuelve el buffer a cero cuando la cabeza ya ocupa demasiado.
+    ///
+    /// Sin esto, el `Vec` solo crecería: la cabeza avanza y los bytes entregados
+    /// quedan al frente para siempre. Compactar a la mitad del tope deja el
+    /// coste amortizado aunque el flujo no pare.
+    fn compact(&mut self) {
+        if self.head == 0 {
+            return;
+        }
+        if self.head == self.bytes.len() {
+            self.bytes.clear();
+            self.head = 0;
+        } else if self.head >= MAX_PENDING_BYTES / 2 {
+            self.bytes.drain(..self.head);
+            self.head = 0;
+        }
+    }
+}
+
+/// Toma el candado de la cola sobreviviendo a un pánico ajeno.
+///
+/// Que otro hilo haya entrado en pánico no debe cortar la salida del shell: la
+/// cola sigue siendo un buffer de bytes válido.
+fn lock_inbox(inbox: &Arc<Mutex<Inbox>>) -> MutexGuard<'_, Inbox> {
+    inbox
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Programa que se está ejecutando en primer plano dentro de una sesión.

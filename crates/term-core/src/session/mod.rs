@@ -146,12 +146,33 @@ impl Session {
         self.size
     }
 
+    /// Cuánta salida del PTY se parsea como máximo en un cuadro.
+    ///
+    /// Un diluvio de salida se reparte entre varios cuadros en vez de
+    /// parsearse entero en uno: la interfaz sigue respondiendo mientras el
+    /// atraso se vacía.
+    pub const PUMP_BUDGET_BYTES: usize = 1024 * 1024;
+
+    /// Bytes de salida esperando a ser parseados.
+    pub fn pending_output_bytes(&self) -> usize {
+        self.pty.pending_bytes()
+    }
+
+    /// Bytes que el tope de la cola del PTY descartó desde el arranque.
+    ///
+    /// Solo crece, y solo puede crecer con un programa que escriba más rápido de
+    /// lo que la terminal parsea. Es la señal de que se perdió salida, no un
+    /// contador de diagnóstico.
+    pub fn dropped_output_bytes(&self) -> u64 {
+        self.pty.dropped_bytes()
+    }
+
     /// Aplica a la rejilla lo que el PTY ya tenga listo.
     ///
     /// Nunca bloquea: si el shell no ha escrito nada, devuelve `false` de
     /// inmediato. La UI la llama en cada cuadro.
     pub fn pump(&mut self) -> bool {
-        let bytes = self.pty.try_read();
+        let bytes = self.pty.try_read(Self::PUMP_BUDGET_BYTES);
         if bytes.is_empty() {
             return false;
         }
