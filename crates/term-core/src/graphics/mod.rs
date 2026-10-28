@@ -6,6 +6,7 @@
 //!
 //! Los bytes ordinarios pasan limpios al emulador sin alteración ni retraso innecesario.
 
+pub mod kitty;
 pub mod sixel;
 
 /// Imagen rasterizada en memoria en formato RGBA de 8 bits por canal.
