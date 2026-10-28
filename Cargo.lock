@@ -3902,15 +3902,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "port-plugin-selection"
-version = "0.1.0"
-source = "git+https://github.com/loonbac/port-plugins.git?branch=master#a41de0b6dbcefb40f02d0550f842b37b5fbf5953"
-dependencies = [
- "port-plugin-api",
- "port-term-core",
-]
-
-[[package]]
 name = "port-term-core"
 version = "0.1.10"
 dependencies = [
