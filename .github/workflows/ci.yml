@@ -186,8 +186,19 @@ jobs:
           restore-keys: |
             nix-${{ matrix.distro }}-
 
+      # En los contenedores de Debian y Fedora el runner no ofrece los
+      # namespaces que el sandbox de Nix necesita, y Nix lo deshabilita. En ese
+      # modo cada build usa /homeless-shelter como HOME, y con varios builds en
+      # paralelo uno lo crea y el siguiente aborta con
+      #   error: home directory "/homeless-shelter" exists; please remove it to
+      #   assure purity of builds without sandboxing
+      # Un solo build a la vez, y la limpieza previa por si el directorio ya
+      # estaba, quitan la carrera sin renunciar al build hermetico.
+      - name: Limpiar el HOME de los builds sin sandbox
+        run: rm -rf /homeless-shelter 2>/dev/null || sudo rm -rf /homeless-shelter 2>/dev/null || true
+
       - name: Build
-        run: nix build .#port --print-build-logs
+        run: nix build .#port --print-build-logs --max-jobs 1
 
       - name: Test
         run: nix develop --command cargo test --workspace --locked

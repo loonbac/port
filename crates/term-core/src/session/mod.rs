@@ -553,8 +553,17 @@ mod tests {
     use crate::pty::PtyConfig;
 
     fn plain_shell() -> PtyConfig {
+        // En Windows no existe `/bin/sh`: el intérprete del sistema es el que
+        // apunta `%COMSPEC%` (`cmd.exe`). Este test necesita una sesión viva,
+        // no un shell POSIX, así que en cada plataforma arranca el suyo. Con la
+        // ruta fija el job de Windows fallaba al crear el proceso.
+        #[cfg(windows)]
+        let command = std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string());
+        #[cfg(not(windows))]
+        let command = "/bin/sh".to_string();
+
         PtyConfig {
-            command: "/bin/sh".to_string(),
+            command,
             args: Vec::new(),
             cwd: None,
             env: Vec::new(),
