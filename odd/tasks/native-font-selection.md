@@ -76,3 +76,32 @@ native sections plus the two setters the registry needs.
 - Limitación del entorno, no del slice: correr `cargo clippy` y `cargo test` en la
   misma sesión de cargo hace timeoutear el probe de los plugins externos de prueba
   (`host::process`, `watch`); la suite corrida sola pasa entera.
+
+## Revisión nativa (RDD)
+
+Rama `feat/firehose-bench-images`, candidato `3c96b4b` sobre la base `27d16cc`, tier
+`medium`, lentes `risk`, `readability` y `reliability`. Lineage
+`review-be4af47c65b3c3ed`.
+
+El refuter devolvió `correction_required` con dos hallazgos CRITICAL causados por el
+candidato, y el plan de corrección se congeló en 80 líneas de diff antes de tocar el
+código (53 aplicadas):
+
+- **R2-001** — el parser nativo leía `family` y `size` pero no `fallbacks`, que el
+  plugin borrado sí exponía (`font_fallbacks()`), así que una sección `font` con esa
+  clave se descartaba en silencio. `Font` gana `fallbacks`, `font_from_config` lo
+  parsea como lista separada por comas y `effective_font_fallbacks` lo consulta antes
+  de caer en las tres familias por defecto.
+- **R3-001** — `parse_hex_color` medía en bytes y cortaba en índices fijos, así que un
+  valor de seis bytes con un carácter multibyte partía el `&str` en una frontera
+  inválida y abortaba la carga de configuración. Ahora exige ASCII antes de cortar.
+
+Ambos se reprodujeron primero (panic `byte index 2 is not a char boundary`, y
+fallbacks que no llegaban al registro) y luego se corrigieron con un test por regla.
+El validador dirigido aprobó el candidato corregido y la autoridad quedó quemada con
+`gentle-ai.review-acknowledged/v1`.
+
+Siete avisos `WARNING` quedaron como trabajo posterior, sin bloquear ni reabrir la
+revisión: R1-001 (native.rs:138-140), R2-002 (registry/mod.rs:277-284), R2-003
+(native.rs:134-140), R2-004 (native.rs:169-175), R3-002 (native.rs:174), R3-003
+(native.rs:146) y R3-004 (native_sections_contract.rs:157-161).
