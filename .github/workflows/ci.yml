@@ -71,10 +71,23 @@ jobs:
             runner: ubuntu-24.04
           - distro: fedora-40
             runner: ubuntu-24.04
-            container: 'fedora:40'
+            # `--privileged` no es por comodidad: sin el, el contenedor no expone
+            # los namespaces que Nix necesita para su sandbox. Nix lo deshabilita,
+            # y entonces cada build usa `/homeless-shelter` como HOME; en cuanto un
+            # build lo crea, el siguiente aborta con
+            #   error: home directory "/homeless-shelter" exists; please remove it
+            #   to assure purity of builds without sandboxing
+            # Limpiar el directorio no sirve porque lo crea un build mientras el
+            # anterior aun corre. Con namespaces el sandbox vuelve y el problema
+            # desaparece de raiz.
+            container:
+              image: fedora:40
+              options: --privileged
           - distro: debian-12
             runner: ubuntu-24.04
-            container: 'debian:12'
+            container:
+              image: debian:12
+              options: --privileged
 
     container: ${{ matrix.container }}
 
@@ -186,19 +199,17 @@ jobs:
           restore-keys: |
             nix-${{ matrix.distro }}-
 
-      # En los contenedores de Debian y Fedora el runner no ofrece los
-      # namespaces que el sandbox de Nix necesita, y Nix lo deshabilita. En ese
-      # modo cada build usa /homeless-shelter como HOME, y con varios builds en
-      # paralelo uno lo crea y el siguiente aborta con
-      #   error: home directory "/homeless-shelter" exists; please remove it to
-      #   assure purity of builds without sandboxing
-      # Un solo build a la vez, y la limpieza previa por si el directorio ya
-      # estaba, quitan la carrera sin renunciar al build hermetico.
-      - name: Limpiar el HOME de los builds sin sandbox
-        run: rm -rf /homeless-shelter 2>/dev/null || sudo rm -rf /homeless-shelter 2>/dev/null || true
+      # Si el sandbox no llega a estar disponible, el directorio que Nix usa como
+      # HOME de los builds queda y el siguiente build aborta. Se limpia por si el
+      # paso anterior lo dejo, y se verifica que el sandbox este activo: cuando no
+      # lo esta, el resultado seria un build impuro que parece verde.
+      - name: Comprobar el sandbox de Nix
+        run: |
+          rm -rf /homeless-shelter 2>/dev/null || true
+          nix config show sandbox
 
       - name: Build
-        run: nix build .#port --print-build-logs --max-jobs 1
+        run: nix build .#port --print-build-logs
 
       - name: Test
         run: nix develop --command cargo test --workspace --locked
