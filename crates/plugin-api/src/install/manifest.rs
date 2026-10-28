@@ -271,7 +271,14 @@ capabilities = ["appearance", "input"]
     #[test]
     fn binary_paths_cover_release_and_debug_and_windows() {
         let paths = candidate_paths(Path::new("/repo"), "demo");
-        let names: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
+        // `candidate_paths` arma las rutas con el separador de la plataforma, asi
+        // que en Windows aparecen como `release\demo.exe`. La comparacion es
+        // sobre el nombre del archivo y su carpeta, no sobre como se escribe la
+        // ruta alli, de ahi la normalizacion.
+        let names: Vec<String> = paths
+            .iter()
+            .map(|p| p.display().to_string().replace('\\', "/"))
+            .collect();
         assert!(names.iter().any(|p| p.contains("release/demo")));
         assert!(names.iter().any(|p| p.contains("release/demo.exe")));
         assert!(names.iter().any(|p| p.contains("debug/demo")));

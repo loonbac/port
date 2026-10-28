@@ -125,6 +125,9 @@ impl Default for Watcher {
 }
 
 #[cfg(test)]
+// Igual que en `host::process`: el vigilado recompila un shell script POSIX, y
+// sin shebang en Windows no hay nada que vigilar.
+#[cfg(unix)]
 mod tests {
     use super::*;
     use crate::host::ExternalPlugin;

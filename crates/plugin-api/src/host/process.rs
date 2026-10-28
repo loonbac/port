@@ -467,6 +467,11 @@ pub fn event_channel() -> (EventSender, EventReceiver) {
 }
 
 #[cfg(test)]
+// Los plugins externos de este contrato son ejecutables con shebang POSIX
+// (`#!/bin/sh`): el anfitrion los lanza como procesos del sistema. En Windows no
+// hay shebang, asi que el sujeto de la prueba no existe y el modulo entero se
+// omite alli en vez de fallar por el arranque del proceso.
+#[cfg(unix)]
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
