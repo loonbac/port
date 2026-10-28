@@ -89,6 +89,13 @@ impl PluginRegistry {
                 }
             }
         }
+        // La sección nativa solo manda si el archivo la fijó; sin configurar,
+        // decide el llamador y la terminal se comporta como siempre.
+        if let Some(family) = &self.native_font.family {
+            if !family.trim().is_empty() {
+                return family.clone();
+            }
+        }
         default.to_string()
     }
 
@@ -110,6 +117,11 @@ impl PluginRegistry {
             if let Some(size) = external.appearance().font_size {
                 return size;
             }
+        }
+        // Un tamaño nativo ausente deja mandar al llamador (`metrics`), que es
+        // quien ya incorpora el zoom vigente.
+        if let Some(size) = self.native_font.size {
+            return size;
         }
         default
     }
@@ -133,6 +145,11 @@ impl PluginRegistry {
             }
         }
         if fallbacks.is_empty() {
+            // La sección nativa ocupa el lugar del plugin borrado; si tampoco
+            // dijo nada, quedan las tres familias con las que PORT arranca.
+            if let Some(native) = &self.native_font.fallbacks {
+                return native.clone();
+            }
             fallbacks = vec![
                 "Symbols Nerd Font Mono".to_string(),
                 "DejaVu Sans Mono".to_string(),
@@ -184,7 +201,9 @@ impl PluginRegistry {
                 });
             }
         }
-        MousePolicy::default()
+        // Sin nadie que hable manda la sección nativa del archivo, no el
+        // default del tipo: así el usuario configura sin instalar nada.
+        self.native_mouse_policy
     }
 
     /// Altura acumulada de las barras superiores activas.

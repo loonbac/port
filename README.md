@@ -145,6 +145,13 @@ enabled = true
 The file is watched: saving it applies changes immediately, including font size,
 opacity and which plugins are enabled.
 
+Two sections need no plugin at all, because a terminal cannot work without
+them: ````font```` (family and optional size) and ````selection```` (`forward_clicks`,
+`forward_drag`, `forward_motion`, `shift_selects`, `copy_on_select`,
+`word_on_double_click`, `line_on_triple_click`, `highlight_color` and
+`highlight_opacity`). PORT parses them when it loads the file, not per frame, and
+a plugin with an appearance or mouse hook still overrides them.
+
 ## Installation
 
 ### Native packages (recommended)
@@ -375,7 +382,6 @@ Official plugins live in **[loonbac/port-plugins](https://github.com/loonbac/por
 | Plugin | Hooks | What it does |
 |---|---|---|
 | `transparency` | `AppearanceHook` | Window background opacity |
-| `font` | `AppearanceHook` | Font family, size and fallbacks |
 | `font-zoom` | `AppearanceHook` | Font size state and zoom operations (no key bindings) |
 | `shortcuts` | — | Bind custom key combinations to callbacks |
 | `herdr` | `AppearanceHook`, `InputHook`, `LayoutHook`, `SpaceHook` | Spaces sidebar, tabs, live process detection, per-session agent state, resizable layout, wallpaper accent colour |
@@ -384,9 +390,10 @@ Official plugins live in **[loonbac/port-plugins](https://github.com/loonbac/por
 See the [plugins repository](https://github.com/loonbac/port-plugins) for
 detailed documentation of each one.
 
-All of these are in-process. A standalone plugin is not listed here: it is
-installed by URL and does not ship as a dependency, exactly like any plugin you
-would write yourself.
+`shortcuts`, `herdr` and `close-guard` compile into PORT as in-process plugins,
+because they draw with GPUI or sit on the keystroke path. `transparency`
+and `font-zoom` are standalone binaries you install by URL, like any
+plugin you would write yourself.
 
 ## License
 

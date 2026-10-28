@@ -11,6 +11,9 @@
 //! - [`hooks`]: los hooks que un plugin puede implementar (apariencia, entrada,
 //!   ratón, layout, espacios y ciclo de vida) y el trait [`Plugin`] que los
 //!   devuelve. Es el contrato, no la ejecución.
+//! - [`native`]: las dos secciones del archivo que PORT trae de fábrica (fuente y
+//!   política de ratón). No son capacidades de plugin: son datos que la terminal
+//!   necesita siempre y que un plugin puede reemplazar.
 //! - [`registry`]: registro central que compone los plugins in-process con los
 //!   externos vivos, invoca sus hooks bajo el watchdog de tiempo y persiste su
 //!   configuración. La política de salud y watchdog vive en un submódulo
@@ -20,6 +23,7 @@ pub mod config;
 pub mod hooks;
 pub mod host;
 pub mod install;
+pub mod native;
 // La política de salud y watchdog del registro es interna: se reexporta desde
 // `registry`, que es su único consumidor.
 mod health;

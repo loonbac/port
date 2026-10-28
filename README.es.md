@@ -153,6 +153,13 @@ enabled = true
 El archivo se vigila: al guardarlo los cambios se aplican al instante,
 incluyendo tamaño de fuente, opacidad y qué plugins están activos.
 
+Dos secciones no necesitan ningún plugin, porque un terminal no funciona sin
+ellas: ````font```` (familia y tamaño opcional) y ````selection```` (`forward_clicks`,
+`forward_drag`, `forward_motion`, `shift_selects`, `copy_on_select`,
+`word_on_double_click`, `line_on_triple_click`, `highlight_color` y
+`highlight_opacity`). PORT las parsea al cargar el archivo, no en cada cuadro, y un
+plugin con hook de apariencia o de ratón sigue pudiendo reemplazarlas.
+
 ## Instalación
 
 ### Paquetes nativos (recomendado)
@@ -383,7 +390,6 @@ forma independiente.
 | Plugin | Hooks | Qué hace |
 |---|---|---|
 | `transparency` | `AppearanceHook` | Opacidad del fondo de la ventana |
-| `font` | `AppearanceHook` | Familia, tamaño y fuentes de respaldo |
 | `font-zoom` | `AppearanceHook` | Estado del tamaño de fuente y operaciones de zoom (sin atajos) |
 | `shortcuts` | — | Asocia combinaciones de teclas a callbacks |
 | `herdr` | `AppearanceHook`, `InputHook`, `LayoutHook`, `SpaceHook` | Barra lateral de espacios, pestañas, detección de procesos en vivo, estado de agentes por sesión, ancho ajustable y color acento del wallpaper |
