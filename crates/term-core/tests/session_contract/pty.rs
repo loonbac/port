@@ -257,7 +257,6 @@ fn spawn_session_with_runs_the_given_program_and_activates_it() {
     );
 }
 
-
 /// Un programa que diluvia la terminal no puede crecer la memoria sin tope ni
 /// dejar en pantalla el principio del flujo: la cola se acota y lo que se pinta
 /// es el final.
@@ -337,4 +336,3 @@ fn one_pump_never_parses_more_than_its_budget() {
         "un solo pump parseó {parsed} bytes, más que la cuota de {budget}"
     );
 }
-
