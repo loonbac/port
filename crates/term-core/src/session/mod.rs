@@ -20,6 +20,7 @@ use alacritty_terminal::term::{Term, TermMode};
 use alacritty_terminal::vte::ansi::Processor;
 
 use crate::frame::{self, Frame, Style};
+use crate::graphics::{kitty::Command, store::Store, GraphicsEvent, Scanner};
 use crate::input::KeyMode;
 use crate::pty::{Pty, PtyConfig, RunningApp};
 
@@ -115,6 +116,16 @@ pub struct Session {
     mouse_policy: MousePolicy,
     program_scanner: crate::program_status::ProgramStatusScanner,
     output_seq: u64,
+    /// Imágenes sixel y kitty graphics recibidas, con su colocación.
+    graphics: Store,
+    /// Extractor de secuencias gráficas: se ejecuta antes del parser VT porque
+    /// ni el parser ni alacritty entienden APC ni DCS.
+    graphics_scanner: Scanner,
+    /// Líneas desplazadas desde el arranque: convierte filas de pantalla en
+    /// líneas absolutas, que es a lo que se anclan las imágenes.
+    line_origin: Cell<i64>,
+    /// Último tamaño de historial visto, para contar el desplazamiento.
+    last_history: Cell<usize>,
 }
 
 impl Session {
@@ -139,6 +150,10 @@ impl Session {
             mouse_policy: MousePolicy::default(),
             program_scanner: crate::program_status::ProgramStatusScanner::new(),
             output_seq: 0,
+            graphics: Store::new(),
+            graphics_scanner: Scanner::new(),
+            line_origin: Cell::new(0),
+            last_history: Cell::new(0),
         })
     }
 
@@ -152,6 +167,16 @@ impl Session {
     /// parsearse entero en uno: la interfaz sigue respondiendo mientras el
     /// atraso se vacía.
     pub const PUMP_BUDGET_BYTES: usize = 1024 * 1024;
+
+    /// Tamaño real de una celda en píxeles.
+    ///
+    /// El núcleo no sabe cuánto mide una celda: lo fija la UI con su tipografía.
+    /// Hace falta para traducir una imagen a celdas y para saber cuántas filas
+    /// baja el cursor al pintarla.
+    pub fn set_cell_size(&mut self, width: usize, height: usize) {
+        self.graphics.set_cell_size(width, height);
+        self.dirty.set(true);
+    }
 
     /// Bytes de salida esperando a ser parseados.
     pub fn pending_output_bytes(&self) -> usize {
@@ -177,13 +202,31 @@ impl Session {
             return false;
         }
         self.output_seq = self.output_seq.wrapping_add(1);
-        let queries = self.program_scanner.advance(&bytes);
-        for _ in 0..queries {
-            let _ = self
-                .pty
-                .write(crate::program_status::PROGRAM_STATUS_RESPONSE);
+
+        // Las secuencias de imagen se sacan ANTES del parser: vte manda APC a un
+        // estado que no despacha, y alacritty no implementa los enganches de DCS.
+        // Lo que no es una imagen llega al parser byte por byte, sin cambios.
+        let scan = self.graphics_scanner.advance(&bytes);
+        let mut reply = Vec::new();
+        if !scan.events.is_empty() {
+            self.handle_graphics(scan.events, &mut reply);
         }
-        self.processor.advance(&mut self.term, &bytes);
+
+        if !scan.plain.is_empty() {
+            let queries = self.program_scanner.advance(&scan.plain);
+            for _ in 0..queries {
+                let _ = self
+                    .pty
+                    .write(crate::program_status::PROGRAM_STATUS_RESPONSE);
+            }
+            self.processor.advance(&mut self.term, &scan.plain);
+        }
+
+        // Las respuestas se escriben una sola vez y después de parsear, para no
+        // intercalarlas con las consultas de protocolo del propio parser.
+        if !reply.is_empty() {
+            let _ = self.pty.write(&reply);
+        }
         self.handle_internal_events();
         // La salida nueva NO toca el viewport: una vista desplazada sobre el
         // historial se conserva aunque el programa escriba sin parar, que es lo
@@ -340,10 +383,84 @@ impl Session {
                 return cached.clone();
             }
         }
-        let frame = frame::build(&self.term);
+        self.sync_line_origin();
+        let images = self
+            .graphics
+            .visible(self.line_origin.get(), self.size.rows);
+        let frame = frame::build_with(&self.term, images);
         *self.cached_frame.borrow_mut() = Some(frame.clone());
         self.dirty.set(false);
         frame
+    }
+
+    /// Pinta en el almacén lo que el escáner sacó del flujo.
+    ///
+    /// El orden importa: el origen se lee ANTES de mover el cursor, porque el
+    /// ancla de la imagen es donde estaba el cursor cuando llegó la secuencia.
+    fn handle_graphics(&mut self, events: Vec<GraphicsEvent>, reply: &mut Vec<u8>) {
+        for event in events {
+            match event {
+                GraphicsEvent::Sixel(image) => {
+                    let origin = self.graphics_origin();
+                    let rows = self.graphics.add_sixel(image, origin);
+                    self.advance_rows(rows);
+                }
+                GraphicsEvent::Kitty(payload) => {
+                    let command = Command::parse(&payload);
+                    let origin = self.graphics_origin();
+                    let effect = self.graphics.apply(command, origin);
+                    if let Some(bytes) = effect.reply {
+                        reply.extend_from_slice(&bytes);
+                    }
+                    self.advance_rows(effect.rows);
+                }
+            }
+        }
+    }
+
+    /// Dónde está el cursor, en el espacio de líneas absolutas del flujo.
+    fn graphics_origin(&self) -> crate::graphics::store::Origin {
+        self.sync_line_origin();
+        let point = self.term.grid().cursor.point;
+        let row = point.line.0.max(0) as usize;
+        crate::graphics::store::Origin {
+            line: self.line_origin.get() + row as i64,
+            row,
+            column: point.column.0,
+            alternate: self.term.mode().contains(TermMode::ALT_SCREEN),
+        }
+    }
+
+    /// Baja el cursor tantas filas como ocupa la imagen recién pintada.
+    ///
+    /// Se alimenta al parser en vez de tocar la rejilla: así el desplazamiento,
+    /// el scroll y el modo de ajuste se comportan como con cualquier otra salida
+    /// del programa.
+    fn advance_rows(&mut self, rows: usize) {
+        if rows == 0 {
+            return;
+        }
+        let mut bytes = Vec::with_capacity(rows * 2);
+        for _ in 0..rows {
+            bytes.extend_from_slice(b"\r\n");
+        }
+        self.processor.advance(&mut self.term, &bytes);
+    }
+
+    /// Cuenta las líneas que el texto ha empujado hacia arriba.
+    ///
+    /// El historial solo crece cuando la pantalla primaria se desplaza, así que
+    /// su crecimiento es la señal. Cuando el scrollback está lleno deja de
+    /// crecer: desde ahí una imagen nueva se ancla bien, pero las viejas dejan
+    /// de seguir el desplazamiento. Es la limitación anotada en la spec.
+    fn sync_line_origin(&self) {
+        let history = self.term.grid().history_size();
+        let last = self.last_history.get();
+        if history > last {
+            self.line_origin
+                .set(self.line_origin.get() + (history - last) as i64);
+        }
+        self.last_history.set(history);
     }
 
     /// El estilo efectivo del terminal, para que la UI tenga los colores base.

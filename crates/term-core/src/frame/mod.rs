@@ -9,10 +9,12 @@
 
 pub mod builder;
 
-pub use builder::build;
+pub use builder::{build, build_with};
 
 use alacritty_terminal::event::EventListener;
 use alacritty_terminal::term::Term;
+
+pub use crate::graphics::store::PlacedImage;
 
 /// Color en RGB de 8 bits por canal, independiente de cualquier biblioteca.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,6 +128,12 @@ pub struct Frame {
     pub cursor_run: Option<CursorRun>,
     /// Cuántas líneas se ha desplazado el viewport respecto del final.
     pub display_offset: usize,
+    /// Imágenes que se pintan sobre la rejilla: sixel y kitty graphics.
+    ///
+    /// Solo se traen las visibles, ya resueltas a filas de pantalla. La UI las
+    /// dibuja antes o después del texto según su `z`, y nunca toca la rejilla
+    /// para hacerlo.
+    pub images: Vec<PlacedImage>,
 }
 
 /// Construye un cuadro desde una rejilla de alacritty.

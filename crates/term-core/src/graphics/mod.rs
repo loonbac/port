@@ -8,6 +8,7 @@
 
 pub mod kitty;
 pub mod sixel;
+pub mod store;
 
 /// Imagen rasterizada en memoria en formato RGBA de 8 bits por canal.
 #[derive(Clone, Debug, PartialEq, Eq)]
