@@ -50,3 +50,21 @@ S9 — Nada nuevo en la ruta caliente: los getters por cuadro no cambian.
   pasa».
 - L2 — El WIP de `port-mobile` quedó fuera de todos los commits de esta rama y no se
   tocó.
+
+## Revisión nativa del slice de avisos
+
+Candidato `f6d9ee7` sobre `396155d`, lineage `review-824dbc76369335fd`, tier
+`medium`, lentes `risk`, `readability` y `reliability`.
+
+**Aprobada en la primera pasada**: los tres revisores admitidos, sin refuter ni
+corrección, y la autoridad quemada con `gentle-ai.review-acknowledged/v1`.
+
+Ocho avisos informativos quedan como trabajo posterior, sin bloquear ni reabrir:
+R2-001 (native.rs:175-178), R2-002 (native_sections_contract.rs:307-310), R2-003
+(native_sections_contract.rs:294-297), R2-004 (registry/mod.rs:98-106), R3-001
+(native.rs:179-180), R3-002 (native_sections_contract.rs:294-297), R3-003
+(native_sections_contract.rs:307-310) y R3-004 (native_sections_contract.rs:273-280).
+
+Dos de los avisos del linaje anterior no eran defectos y quedaron fijados con test:
+`PluginConfig::get_bool` ya normaliza la caja del booleano, y `enabled = false` ya
+cortaba la sección entera antes de mirar `fallbacks`.
