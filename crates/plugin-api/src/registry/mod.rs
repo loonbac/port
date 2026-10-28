@@ -26,6 +26,7 @@ use crate::config::{ConfigFile, PluginConfig};
 use crate::health::RegisteredPlugin;
 use crate::hooks::Plugin;
 use crate::host::ExternalPlugin;
+use crate::native;
 use crate::services::Services;
 use port_term_core::session::MousePolicy;
 
@@ -98,11 +99,11 @@ impl PluginRegistry {
     /// consultan el valor ya decidido. Un plugin con el mismo `id` no participa
     /// de estas claves; su sección la aplica el bucle de plugins.
     fn apply_native_sections(&mut self, configs: &BTreeMap<String, PluginConfig>) {
-        if let Some(cfg) = configs.get(crate::native::FONT_SECTION) {
-            self.native_font = crate::native::font_from_config(cfg);
+        if let Some(cfg) = configs.get(native::FONT_SECTION) {
+            self.native_font = native::font_from_config(cfg);
         }
-        if let Some(cfg) = configs.get(crate::native::SELECTION_SECTION) {
-            self.native_mouse_policy = crate::native::mouse_policy_from_config(cfg);
+        if let Some(cfg) = configs.get(native::SELECTION_SECTION) {
+            self.native_mouse_policy = native::mouse_policy_from_config(cfg);
         }
     }
 

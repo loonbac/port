@@ -280,21 +280,30 @@ fn el_color_admite_espacios_alrededor() {
     assert_eq!(sin_almohadilla, con_almohadilla);
 }
 
-/// S6 del slice de avisos: la misma verdad escrita en mayúsculas se aplica igual.
+/// La misma verdad escrita en mayúsculas se aplica igual, tanto en las claves
+/// como en `enabled`.
 ///
 /// `PluginConfig::get_bool` ya normaliza la caja; esto lo deja fijado desde la
 /// sección nativa, que es donde el contrato importa.
 #[test]
 fn un_booleano_en_mayusculas_se_aplica() {
-    assert!(
-        MousePolicy::default().copy_on_select,
-        "el default es el contrario"
-    );
+    let default = MousePolicy::default();
 
     let text = "```selection\ncopy_on_select = False\nenabled = TRUE\n```\n";
     let configs = parse(text);
     let policy = native::mouse_policy_from_config(&configs[native::SELECTION_SECTION]);
-    assert!(!policy.copy_on_select, "un False en mayúsculas apaga");
+    assert_eq!(
+        policy.copy_on_select, !default.copy_on_select,
+        "un False en mayúsculas apaga, y enabled = TRUE deja aplicar la sección"
+    );
+
+    let text = "```selection\ncopy_on_select = False\nenabled = FALSE\n```\n";
+    let configs = parse(text);
+    let policy = native::mouse_policy_from_config(&configs[native::SELECTION_SECTION]);
+    assert_eq!(
+        policy.copy_on_select, default.copy_on_select,
+        "un enabled = FALSE en mayúsculas apaga la sección entera"
+    );
 }
 
 /// S8 del slice de avisos: apagar la sección apaga también sus fallbacks.
@@ -304,8 +313,9 @@ fn una_seccion_apagada_no_aporta_fallbacks() {
     let configs = parse(text);
     let mut registro = PluginRegistry::new();
     registro.load_configs(&configs);
-    assert_ne!(
+    assert_eq!(
         registro.effective_font_fallbacks(),
-        vec!["Solo Esta".to_string()]
+        PluginRegistry::new().effective_font_fallbacks(),
+        "una sección apagada deja los respaldos de fábrica, no los suyos"
     );
 }

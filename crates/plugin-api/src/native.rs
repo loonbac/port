@@ -173,20 +173,22 @@ pub fn mouse_policy_default_config(policy: &MousePolicy) -> PluginConfig {
     cfg
 }
 
-/// Parsea un color `#rrggbb` o `rrggbb`.
+/// Parsea un color `#rrggbb` o `rrggbb`, con o sin espacios alrededor.
+///
+/// El recorte va antes de quitar la almohadilla: `  #58a6ff` y `  58a6ff` son la
+/// misma entrada, y quien escribe el archivo no tiene por qué saber en qué
+/// orden se mira. Los cortes son por byte, así que un valor que no sea ASCII
+/// puro se rechaza antes de llegar a ellos; un carácter multibyte partiría el
+/// `&str` en un límite inválido.
 pub fn parse_hex_color(hex: &str) -> Option<Rgb> {
-    // Se recorta antes de quitar la almohadilla: `  #fff` y `  fff` son la misma
-    // entrada, y el usuario no tiene por qué saber en qué orden se mira.
-    let trimmed = hex.trim();
-    let clean = trimmed.strip_prefix('#').unwrap_or(trimmed);
-    // Los cortes de abajo son por byte: sin ASCII puro el índice puede caer
-    // dentro de un carácter y partir el `&str` en un límite inválido.
-    if clean.len() != 6 || !clean.is_ascii() {
+    let hex = hex.trim();
+    let hex = hex.strip_prefix('#').unwrap_or(hex);
+    if hex.len() != 6 || !hex.is_ascii() {
         return None;
     }
-    let r = u8::from_str_radix(&clean[0..2], 16).ok()?;
-    let g = u8::from_str_radix(&clean[2..4], 16).ok()?;
-    let b = u8::from_str_radix(&clean[4..6], 16).ok()?;
+    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
     Some(Rgb::new(r, g, b))
 }
 
