@@ -56,7 +56,7 @@ program asked for.
 - T4 (S1-S3, S5) — `port-app`: decode to `RenderImage`, cache per image id and paint
   with `Window::paint_image`. Commit: 8bc122f.
 - T5 (S1-S7) — README feature list, module docs and the Velocitty comparison.
-  Commit: pending.
+  Commit: dd3ba27.
 
 ## Log
 

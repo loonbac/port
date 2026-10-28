@@ -80,6 +80,22 @@ image is capped at 32 MiB and the whole store at 64 MiB, dropping the oldest
 placement first. Frame animation, unicode placeholders and multi-frame transfers
 are not implemented.
 
+## Debug overlay
+
+Emit `OSC 556` and PORT draws diagnostic layers over the grid. The program
+controls it, so nothing appears that nobody asked for.
+
+| Payload | Effect |
+|---|---|
+| `ESC ] 556 ST` | turn every layer on |
+| `ESC ] 556 ; hud ST` | a box with measured counters: grid size, pending PTY bytes, dropped bytes, live image placements, scrollback position and whether the alternate screen is active |
+| `ESC ] 556 ; grid ST` | one thin line per cell boundary, which is how you see a wide character or a wrap that is off by one |
+| `ESC ] 556 ; off ST` | turn everything off |
+
+The HUD shows what the terminal actually keeps, so it is the quickest way to
+watch the ingestion limits work: `pending` is what waits in the bounded backlog
+and `dropped` is what the cap threw away.
+
 ## Keyboard shortcuts
 
 | Shortcut | Action |

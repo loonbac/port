@@ -343,7 +343,8 @@ impl Inbox {
             self.dropped += (self.pending() + chunk.len() - MAX_PENDING_BYTES) as u64;
             self.bytes.clear();
             self.head = 0;
-            self.bytes.extend_from_slice(&chunk[chunk.len() - MAX_PENDING_BYTES..]);
+            self.bytes
+                .extend_from_slice(&chunk[chunk.len() - MAX_PENDING_BYTES..]);
             return;
         }
 

@@ -292,6 +292,11 @@ impl Store {
         !self.placements.is_empty()
     }
 
+    /// Cuántas colocaciones siguen vigentes, para el HUD de depuración.
+    pub fn placement_count(&self) -> usize {
+        self.placements.len()
+    }
+
     fn transmit(&mut self, transmission: Transmission, at: Origin) -> Effect {
         let mut effect = Effect::nothing();
 

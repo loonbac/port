@@ -42,7 +42,11 @@ const SIXEL: &[u8] = b"\x1bPq#0;2;100;0;0#0@A_\x1b\\";
 fn sixel_output_appears_in_the_frame() {
     let mut session = started("");
     session.write(SIXEL).expect("escribir el sixel");
-    let _ = pump_until_quiet(&mut session, Duration::from_millis(200), Duration::from_secs(5));
+    let _ = pump_until_quiet(
+        &mut session,
+        Duration::from_millis(200),
+        Duration::from_secs(5),
+    );
 
     let frame = session.frame();
     assert_eq!(frame.images.len(), 1, "el sixel debía pintarse");
@@ -53,7 +57,11 @@ fn sixel_output_appears_in_the_frame() {
     assert_eq!(image.columns, 1);
     assert_eq!(image.rows, 1);
     match image.pixels.as_ref() {
-        Pixels::Rgba { width, height, data } => {
+        Pixels::Rgba {
+            width,
+            height,
+            data,
+        } => {
             assert_eq!((*width, *height), (3, 6));
             assert_eq!(&data[0..4], [255, 0, 0, 255], "primer píxel rojo");
         }
@@ -72,7 +80,11 @@ fn kitty_transmit_and_display_appears_in_the_frame() {
     session
         .write(b"\x1b_Ga=T,f=24,s=1,v=1,i=7;/wAA\x1b\\")
         .expect("escribir el comando");
-    let _ = pump_until_quiet(&mut session, Duration::from_millis(200), Duration::from_secs(5));
+    let _ = pump_until_quiet(
+        &mut session,
+        Duration::from_millis(200),
+        Duration::from_secs(5),
+    );
 
     let frame = session.frame();
     assert_eq!(frame.images.len(), 1, "la imagen debía quedar colocada");
@@ -80,7 +92,11 @@ fn kitty_transmit_and_display_appears_in_the_frame() {
     assert_eq!(image.image, 7);
     assert_eq!(image.row, 0);
     match image.pixels.as_ref() {
-        Pixels::Rgba { width, height, data } => {
+        Pixels::Rgba {
+            width,
+            height,
+            data,
+        } => {
             assert_eq!((*width, *height), (1, 1));
             assert_eq!(data, &[255, 0, 0, 255], "el píxel rojo llega como RGBA");
         }
@@ -92,10 +108,13 @@ fn kitty_transmit_and_display_appears_in_the_frame() {
 fn a_kitty_query_is_answered_on_the_pty() {
     // El programa pide la consulta y lee la respuesta: la terminal tiene que
     // escribirla en el PTY o este test se queda sin los bytes de OK.
-    let mut session = started(
-        "printf '\\033_Ga=q,i=1\\033\\\\'; head -c 11 2>/dev/null | od -An -tx1; ",
+    let mut session =
+        started("printf '\\033_Ga=q,i=1\\033\\\\'; head -c 11 2>/dev/null | od -An -tx1; ");
+    let _ = pump_until_quiet(
+        &mut session,
+        Duration::from_millis(300),
+        Duration::from_secs(5),
     );
-    let _ = pump_until_quiet(&mut session, Duration::from_millis(300), Duration::from_secs(5));
 
     let text = text_of(&session);
     // 4f 4b es OK en hexadecimal.
@@ -111,13 +130,21 @@ fn deleting_an_image_removes_it_from_the_frame() {
     session
         .write(b"\x1b_Ga=T,f=24,s=1,v=1,i=9;/wAA\x1b\\")
         .expect("escribir el comando");
-    let _ = pump_until_quiet(&mut session, Duration::from_millis(200), Duration::from_secs(5));
+    let _ = pump_until_quiet(
+        &mut session,
+        Duration::from_millis(200),
+        Duration::from_secs(5),
+    );
     assert_eq!(session.frame().images.len(), 1);
 
     session
         .write(b"\x1b_Ga=d,d=i,i=9\x1b\\")
         .expect("escribir el borrado");
-    let _ = pump_until_quiet(&mut session, Duration::from_millis(200), Duration::from_secs(5));
+    let _ = pump_until_quiet(
+        &mut session,
+        Duration::from_millis(200),
+        Duration::from_secs(5),
+    );
     assert!(
         session.frame().images.is_empty(),
         "la imagen borrada no debe seguir en el cuadro"
@@ -131,18 +158,34 @@ fn an_image_scrolls_up_with_the_text() {
     session
         .write(b"\n\n\n\n\n\n\n\n\n")
         .expect("bajar el cursor");
-    let _ = pump_until_quiet(&mut session, Duration::from_millis(200), Duration::from_secs(5));
+    let _ = pump_until_quiet(
+        &mut session,
+        Duration::from_millis(200),
+        Duration::from_secs(5),
+    );
     session.write(SIXEL).expect("escribir el sixel");
-    let _ = pump_until_quiet(&mut session, Duration::from_millis(200), Duration::from_secs(5));
+    let _ = pump_until_quiet(
+        &mut session,
+        Duration::from_millis(200),
+        Duration::from_secs(5),
+    );
 
     // La colocación baja el cursor una fila más, así que la pantalla se
     // desplaza y la imagen queda una fila por encima del borde inferior: es el
     // comportamiento de un terminal real con una imagen en la última línea.
     let before = session.frame().images.first().map(|image| image.row);
-    assert_eq!(before, Some(8), "la imagen empieza en la última fila visible");
+    assert_eq!(
+        before,
+        Some(8),
+        "la imagen empieza en la última fila visible"
+    );
 
     session.write(b"\n").expect("desplazar el texto");
-    let _ = pump_until_quiet(&mut session, Duration::from_millis(200), Duration::from_secs(5));
+    let _ = pump_until_quiet(
+        &mut session,
+        Duration::from_millis(200),
+        Duration::from_secs(5),
+    );
 
     let after = session.frame().images.first().map(|image| image.row);
     assert_eq!(after, Some(7), "la imagen sube con el texto");
@@ -151,23 +194,38 @@ fn an_image_scrolls_up_with_the_text() {
 #[test]
 fn on_the_alternate_screen_the_image_stays_put() {
     let mut session = started("printf '\\033[?1049h'; ");
-    let _ = pump_until_quiet(&mut session, Duration::from_millis(200), Duration::from_secs(5));
+    let _ = pump_until_quiet(
+        &mut session,
+        Duration::from_millis(200),
+        Duration::from_secs(5),
+    );
 
     session.write(b"\n\n\n").expect("bajar el cursor");
-    let _ = pump_until_quiet(&mut session, Duration::from_millis(200), Duration::from_secs(5));
+    let _ = pump_until_quiet(
+        &mut session,
+        Duration::from_millis(200),
+        Duration::from_secs(5),
+    );
     session.write(SIXEL).expect("escribir el sixel");
-    let _ = pump_until_quiet(&mut session, Duration::from_millis(200), Duration::from_secs(5));
+    let _ = pump_until_quiet(
+        &mut session,
+        Duration::from_millis(200),
+        Duration::from_secs(5),
+    );
 
     let before = session.frame().images.first().map(|image| image.row);
     assert_eq!(before, Some(3));
 
     session.write(b"\n\n\n\n\n\n\n").expect("desplazar");
-    let _ = pump_until_quiet(&mut session, Duration::from_millis(200), Duration::from_secs(5));
+    let _ = pump_until_quiet(
+        &mut session,
+        Duration::from_millis(200),
+        Duration::from_secs(5),
+    );
 
     let after = session.frame().images.first().map(|image| image.row);
     assert_eq!(
-        after,
-        before,
+        after, before,
         "en pantalla alterna la imagen no sigue al texto"
     );
 }

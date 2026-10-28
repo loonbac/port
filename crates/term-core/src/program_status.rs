@@ -43,6 +43,7 @@ pub struct ProgramStatusScanner {
     status: Option<ProgramStatus>,
     title: String,
     progress: String,
+    overlay: crate::overlay::Flags,
 }
 
 impl ProgramStatusScanner {
@@ -151,6 +152,17 @@ impl ProgramStatusScanner {
             return false;
         }
 
+        // OSC 556 solo cambia capas de depuración: no aporta estado de
+        // programa, así que va antes y no toca el resto de los campos.
+        if let Some(rest) = payload.strip_prefix("556;") {
+            self.overlay = crate::overlay::Flags::parse(rest);
+            return false;
+        }
+        if payload.trim() == "556" {
+            self.overlay = crate::overlay::Flags::parse("");
+            return false;
+        }
+
         if let Some(title) = payload
             .strip_prefix("0;")
             .or_else(|| payload.strip_prefix("2;"))
@@ -182,6 +194,11 @@ impl ProgramStatusScanner {
     /// Progreso anunciado vía OSC 9;4.
     pub fn progress(&self) -> &str {
         &self.progress
+    }
+
+    /// Capas de depuración pedidas por el programa vía OSC 556.
+    pub fn overlay(&self) -> crate::overlay::Flags {
+        self.overlay
     }
 }
 

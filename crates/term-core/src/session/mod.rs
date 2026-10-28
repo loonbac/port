@@ -388,10 +388,36 @@ impl Session {
         let images = self
             .graphics
             .visible(self.line_origin.get(), self.size.rows);
-        let frame = frame::build_with(&self.term, images);
+        let mut frame = frame::build_with(&self.term, images);
+        frame.debug = self.debug_state();
         *self.cached_frame.borrow_mut() = Some(frame.clone());
         self.dirty.set(false);
         frame
+    }
+
+    /// Capas de depuración que pidió el programa por OSC 556.
+    pub fn debug_flags(&self) -> crate::overlay::Flags {
+        self.program_scanner.overlay()
+    }
+
+    /// Estado de depuración del cuadro: capas pedidas y contadores medidos.
+    fn debug_state(&self) -> crate::overlay::State {
+        let flags = self.debug_flags();
+        if !flags.any() {
+            return crate::overlay::State::default();
+        }
+        crate::overlay::State {
+            flags,
+            stats: crate::overlay::Stats {
+                columns: self.term.columns(),
+                rows: self.term.screen_lines(),
+                pending_bytes: self.pty.pending_bytes(),
+                dropped_bytes: self.pty.dropped_bytes(),
+                images: self.graphics.placement_count(),
+                scrollback: self.term.grid().history_size(),
+                alternate: self.term.mode().contains(TermMode::ALT_SCREEN),
+            },
+        }
     }
 
     /// Pinta en el almacén lo que el escáner sacó del flujo.

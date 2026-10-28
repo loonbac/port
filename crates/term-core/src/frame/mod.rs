@@ -134,6 +134,10 @@ pub struct Frame {
     /// dibuja antes o después del texto según su `z`, y nunca toca la rejilla
     /// para hacerlo.
     pub images: Vec<PlacedImage>,
+    /// Capas de depuración pedidas por OSC 556 y los contadores que muestra el
+    /// HUD. Viaja en el cuadro para que la UI pinte sin volver a consultar la
+    /// sesión, igual que el resto de lo que se dibuja.
+    pub debug: crate::overlay::State,
 }
 
 /// Construye un cuadro desde una rejilla de alacritty.

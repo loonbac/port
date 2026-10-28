@@ -85,8 +85,7 @@ pub fn decode(body: &[u8]) -> Option<Image> {
                     if (0x3f..=0x7e).contains(&sixel_b) {
                         let val = sixel_b - 0x3f;
                         if val != 0 && count > 0 {
-                            max_painted_band =
-                                Some(max_painted_band.map_or(band, |m| m.max(band)));
+                            max_painted_band = Some(max_painted_band.map_or(band, |m| m.max(band)));
                             let rightmost = col.saturating_add(count.saturating_sub(1));
                             max_painted_col =
                                 Some(max_painted_col.map_or(rightmost, |m| m.max(rightmost)));

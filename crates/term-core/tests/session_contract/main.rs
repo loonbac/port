@@ -10,6 +10,7 @@ mod graphics;
 mod grid;
 mod manager;
 mod mouse;
+mod overlay;
 mod paste;
 mod pty;
 

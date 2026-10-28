@@ -325,6 +325,7 @@ pub fn build<T: EventListener>(term: &Term<T>) -> Frame {
         cursor_run,
         display_offset,
         images: Vec::new(),
+        debug: crate::overlay::State::default(),
     }
 }
 

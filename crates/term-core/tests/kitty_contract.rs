@@ -238,18 +238,12 @@ fn query_action_replies_ok_and_other_commands_reply_none() {
     // a=q con i -> Query { image: Some(i) } y respuesta exacta
     let cmd_q_i = Command::parse(b"Ga=q,i=42");
     assert_eq!(cmd_q_i, Command::Query { image: Some(42) });
-    assert_eq!(
-        cmd_q_i.reply(),
-        Some(b"\x1b_Gi=42;OK\x1b\\".to_vec())
-    );
+    assert_eq!(cmd_q_i.reply(), Some(b"\x1b_Gi=42;OK\x1b\\".to_vec()));
 
     // a=q sin i -> Query { image: None } y respuesta con i=0
     let cmd_q_no_i = Command::parse(b"Ga=q");
     assert_eq!(cmd_q_no_i, Command::Query { image: None });
-    assert_eq!(
-        cmd_q_no_i.reply(),
-        Some(b"\x1b_Gi=0;OK\x1b\\".to_vec())
-    );
+    assert_eq!(cmd_q_no_i.reply(), Some(b"\x1b_Gi=0;OK\x1b\\".to_vec()));
 
     // Cualquier otro comando no genera respuesta (S7: no unsolicited replies)
     let cmd_transmit = Command::parse(b"Ga=t,f=100;AAAA");

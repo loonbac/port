@@ -86,6 +86,22 @@ terminal no es un visor de fotos: una imagen está limitada a 32 MiB y el almac�
 completo a 64 MiB, descartando primero la colocación más vieja. No hay animación
 por cuadros, ni marcadores unicode, ni transferencias de varios cuadros.
 
+## Capas de depuración
+
+Emite `OSC 556` y PORT dibuja capas de diagnóstico sobre la rejilla. Lo controla
+el programa, así que no aparece nada que nadie haya pedido.
+
+| Payload | Efecto |
+|---|---|
+| `ESC ] 556 ST` | enciende todas las capas |
+| `ESC ] 556 ; hud ST` | una caja con contadores medidos: tamaño de la rejilla, bytes pendientes en el PTY, bytes descartados, imágenes colocadas, posición del scrollback y si está activa la pantalla alterna |
+| `ESC ] 556 ; grid ST` | una línea fina por borde de celda, que es como se ve un carácter ancho o un salto de línea desfasado |
+| `ESC ] 556 ; off ST` | apaga todo |
+
+El HUD muestra lo que la terminal guarda de verdad, así que es la forma más
+rápida de ver los límites de ingesta en acción: `pending` es lo que espera en la
+cola acotada y `dropped` lo que el tope descartó.
+
 ## Atajos de teclado
 
 | Atajo | Acción |

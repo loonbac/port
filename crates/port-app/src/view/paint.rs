@@ -230,6 +230,12 @@ pub(crate) fn paint_frame(
         false,
         window,
     );
+
+    if frame.debug.flags.any() {
+        paint_debug(
+            bounds, frame, &regular, font_size, origin_x, origin_y, cw_f32, ch_f32, window, cx,
+        );
+    }
 }
 
 /// Pinta las imágenes colocadas de una de las dos capas.
@@ -269,6 +275,129 @@ fn paint_images(
         // que empieza por encima del borde superior se dibuja parcialmente sin
         // ninguna cuenta extra aquí.
         let _ = window.paint_image(bounds, gpui::Corners::default(), render, 0, false);
+    }
+}
+
+/// Pinta las capas de depuración que el programa pidió por OSC 556.
+///
+/// La rejilla va primero, debajo de todo, para que las líneas no tapen el
+/// texto. El HUD se ancla a la esquina superior derecha, que es donde menos
+/// molesta: quien lo enciende ya sabe que está depurando.
+#[allow(clippy::too_many_arguments)]
+fn paint_debug(
+    bounds: Bounds<Pixels>,
+    frame: &Frame,
+    font: &Font,
+    font_size: Pixels,
+    origin_x: Pixels,
+    origin_y: Pixels,
+    cell_width: f32,
+    cell_height: f32,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let state = frame.debug;
+
+    if state.flags.grid {
+        let line = color(Rgb {
+            r: 0x3a,
+            g: 0x3a,
+            b: 0x46,
+        })
+        .opacity(0.7);
+        for column in 0..=frame.columns {
+            let x = origin_x + px(cell_width * column as f32);
+            window.paint_quad(fill(
+                Bounds::new(point(x, origin_y), size(px(1.0), bounds.size.height)),
+                line,
+            ));
+        }
+        for row in 0..=frame.rows.len() {
+            let y = origin_y + px(cell_height * row as f32);
+            window.paint_quad(fill(
+                Bounds::new(point(origin_x, y), size(bounds.size.width, px(1.0))),
+                line,
+            ));
+        }
+    }
+
+    if !state.flags.hud {
+        return;
+    }
+
+    let stats = state.stats;
+    let lines = [
+        format!("grid {}x{}", stats.columns, stats.rows),
+        format!("pending {}", bytes(stats.pending_bytes as u64)),
+        format!("dropped {}", bytes(stats.dropped_bytes)),
+        format!("images {}", stats.images),
+        format!(
+            "scroll {}{}",
+            stats.scrollback,
+            if stats.alternate { " alt" } else { "" }
+        ),
+    ];
+
+    // La fuente del terminal es monoespaciada, así que el ancho del cuadro sale
+    // de contar caracteres: no hace falta medir el texto.
+    let pad = 6.0_f32;
+    let widest = lines.iter().map(|line| line.len()).max().unwrap_or(1) as f32;
+    let box_width = widest * cell_width + pad * 2.0;
+    let box_height = cell_height * lines.len() as f32 + pad * 2.0;
+    let box_origin = point(
+        bounds.origin.x + bounds.size.width - px(box_width) - px(pad),
+        bounds.origin.y + px(pad),
+    );
+    window.paint_quad(fill(
+        Bounds::new(box_origin, size(px(box_width), px(box_height))),
+        color(Rgb {
+            r: 0x10,
+            g: 0x10,
+            b: 0x18,
+        })
+        .opacity(0.85),
+    ));
+
+    for (index, line) in lines.iter().enumerate() {
+        let text_run = TextRun {
+            len: line.len(),
+            font: font.clone(),
+            color: color(Rgb {
+                r: 0xff,
+                g: 0xff,
+                b: 0xff,
+            }),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        let text_origin = point(
+            box_origin.x + px(pad),
+            box_origin.y + px(pad + cell_height * index as f32),
+        );
+        window
+            .text_system()
+            .shape_line(
+                line.clone().into(),
+                font_size,
+                &[text_run],
+                Some(px(cell_width)),
+            )
+            .paint(text_origin, px(cell_height), window, cx)
+            .ok();
+    }
+}
+
+/// Formatea un tamaño de bytes para el HUD.
+fn bytes(value: u64) -> String {
+    const KIB: u64 = 1024;
+    const MIB: u64 = KIB * 1024;
+    if value >= MIB {
+        format!("{:.1} MiB", value as f64 / MIB as f64)
+    } else if value >= KIB {
+        format!("{:.1} KiB", value as f64 / KIB as f64)
+    } else {
+        format!("{value} B")
     }
 }
 
