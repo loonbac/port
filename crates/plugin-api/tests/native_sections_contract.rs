@@ -121,7 +121,7 @@ fn un_plugin_gana_sobre_la_seccion_nativa() {
 #[test]
 fn la_seccion_de_raton_se_lee_del_archivo() {
     let text = "```selection\nforward_clicks = false\ncopy_on_select = false\nhighlight_color = #102030\nhighlight_opacity = 1.5\nenabled = true\n```\n";
-    let configs = parse(&text);
+    let configs = parse(text);
     let policy = native::mouse_policy_from_config(&configs[native::SELECTION_SECTION]);
 
     assert!(!policy.forward_clicks);
@@ -158,7 +158,7 @@ fn un_valor_ilegible_conserva_el_default() {
 #[test]
 fn una_seccion_apagada_se_ignora() {
     let text = "```selection\ncopy_on_select = false\nenabled = false\n```\n\n```font\nfamily = Otra\nenabled = false\n```\n";
-    let configs = parse(&text);
+    let configs = parse(text);
     let mut registro = PluginRegistry::new();
     registro.load_configs(&configs);
 
@@ -264,5 +264,48 @@ fn los_fallbacks_de_la_seccion_nativa_se_aplican() {
     assert_eq!(
         registro.effective_font_fallbacks(),
         vec!["Simbolos Mono".to_string(), "DejaVu Sans Mono".to_string()]
+    );
+}
+
+/// S2 del slice de avisos: los espacios alrededor del color no dependen de la
+/// posición del `#`.
+#[test]
+fn el_color_admite_espacios_alrededor() {
+    let con_almohadilla = native::parse_hex_color("  #58a6ff  ");
+    let sin_almohadilla = native::parse_hex_color(" 58a6ff ");
+    assert_eq!(
+        con_almohadilla,
+        Some(port_term_core::frame::Rgb::new(0x58, 0xa6, 0xff))
+    );
+    assert_eq!(sin_almohadilla, con_almohadilla);
+}
+
+/// S6 del slice de avisos: la misma verdad escrita en mayúsculas se aplica igual.
+///
+/// `PluginConfig::get_bool` ya normaliza la caja; esto lo deja fijado desde la
+/// sección nativa, que es donde el contrato importa.
+#[test]
+fn un_booleano_en_mayusculas_se_aplica() {
+    assert!(
+        MousePolicy::default().copy_on_select,
+        "el default es el contrario"
+    );
+
+    let text = "```selection\ncopy_on_select = False\nenabled = TRUE\n```\n";
+    let configs = parse(text);
+    let policy = native::mouse_policy_from_config(&configs[native::SELECTION_SECTION]);
+    assert!(!policy.copy_on_select, "un False en mayúsculas apaga");
+}
+
+/// S8 del slice de avisos: apagar la sección apaga también sus fallbacks.
+#[test]
+fn una_seccion_apagada_no_aporta_fallbacks() {
+    let text = "```font\nfamily = Otra\nfallbacks = Solo Esta\nenabled = false\n```\n";
+    let configs = parse(text);
+    let mut registro = PluginRegistry::new();
+    registro.load_configs(&configs);
+    assert_ne!(
+        registro.effective_font_fallbacks(),
+        vec!["Solo Esta".to_string()]
     );
 }

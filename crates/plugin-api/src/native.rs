@@ -101,23 +101,46 @@ pub fn mouse_policy_from_config(config: &PluginConfig) -> MousePolicy {
     if !is_enabled(config) {
         return policy;
     }
-    apply_bool(config, "forward_clicks", &mut policy.forward_clicks);
-    apply_bool(config, "forward_drag", &mut policy.forward_drag);
-    apply_bool(config, "forward_motion", &mut policy.forward_motion);
-    apply_bool(config, "shift_selects", &mut policy.shift_selects);
-    apply_bool(config, "copy_on_select", &mut policy.copy_on_select);
+    let section = SELECTION_SECTION;
     apply_bool(
         config,
+        section,
+        "forward_clicks",
+        &mut policy.forward_clicks,
+    );
+    apply_bool(config, section, "forward_drag", &mut policy.forward_drag);
+    apply_bool(
+        config,
+        section,
+        "forward_motion",
+        &mut policy.forward_motion,
+    );
+    apply_bool(config, section, "shift_selects", &mut policy.shift_selects);
+    apply_bool(
+        config,
+        section,
+        "copy_on_select",
+        &mut policy.copy_on_select,
+    );
+    apply_bool(
+        config,
+        section,
         "word_on_double_click",
         &mut policy.word_on_double_click,
     );
     apply_bool(
         config,
+        section,
         "line_on_triple_click",
         &mut policy.line_on_triple_click,
     );
-    apply_color(config, "highlight_color", &mut policy.highlight);
-    apply_opacity(config, "highlight_opacity", &mut policy.highlight_opacity);
+    apply_color(config, section, "highlight_color", &mut policy.highlight);
+    apply_opacity(
+        config,
+        section,
+        "highlight_opacity",
+        &mut policy.highlight_opacity,
+    );
     policy
 }
 
@@ -125,6 +148,10 @@ pub fn mouse_policy_from_config(config: &PluginConfig) -> MousePolicy {
 ///
 /// Se deriva en lugar de repetir los números: es lo que impide que el archivo
 /// distribuido y los defaults del núcleo se separen con el tiempo.
+///
+/// Lo que se escribe fija los valores del núcleo en ese archivo. Un archivo que
+/// ya existe conserva los suyos: cambiar un default aquí no reescribe nada, así
+/// que la deriva solo aparece cuando el usuario crea el archivo de cero.
 pub fn mouse_policy_default_config(policy: &MousePolicy) -> PluginConfig {
     let mut cfg = PluginConfig::new();
     cfg.set("forward_clicks", policy.forward_clicks);
@@ -148,7 +175,10 @@ pub fn mouse_policy_default_config(policy: &MousePolicy) -> PluginConfig {
 
 /// Parsea un color `#rrggbb` o `rrggbb`.
 pub fn parse_hex_color(hex: &str) -> Option<Rgb> {
-    let clean = hex.strip_prefix('#').unwrap_or(hex).trim();
+    // Se recorta antes de quitar la almohadilla: `  #fff` y `  fff` son la misma
+    // entrada, y el usuario no tiene por qué saber en qué orden se mira.
+    let trimmed = hex.trim();
+    let clean = trimmed.strip_prefix('#').unwrap_or(trimmed);
     // Los cortes de abajo son por byte: sin ASCII puro el índice puede caer
     // dentro de un carácter y partir el `&str` en un límite inválido.
     if clean.len() != 6 || !clean.is_ascii() {
@@ -165,38 +195,33 @@ fn is_enabled(config: &PluginConfig) -> bool {
     config.get_bool("enabled").unwrap_or(true)
 }
 
-fn apply_bool(config: &PluginConfig, key: &str, target: &mut bool) {
+fn apply_bool(config: &PluginConfig, section: &str, key: &str, target: &mut bool) {
     let Some(raw) = config.get(key) else {
         return;
     };
     match config.get_bool(key) {
         Some(value) => *target = value,
-        None => warn(SELECTION_SECTION, key, raw, "se esperaba true o false"),
+        None => warn(section, key, raw, "se esperaba true o false"),
     }
 }
 
-fn apply_color(config: &PluginConfig, key: &str, target: &mut Rgb) {
+fn apply_color(config: &PluginConfig, section: &str, key: &str, target: &mut Rgb) {
     let Some(raw) = config.get(key) else {
         return;
     };
     match parse_hex_color(raw) {
         Some(color) => *target = color,
-        None => warn(SELECTION_SECTION, key, raw, "se esperaba un color #rrggbb"),
+        None => warn(section, key, raw, "se esperaba un color #rrggbb"),
     }
 }
 
-fn apply_opacity(config: &PluginConfig, key: &str, target: &mut f32) {
+fn apply_opacity(config: &PluginConfig, section: &str, key: &str, target: &mut f32) {
     let Some(raw) = config.get(key) else {
         return;
     };
     match raw.trim().parse::<f32>() {
         Ok(value) => *target = value.clamp(0.0, 1.0),
-        Err(_) => warn(
-            SELECTION_SECTION,
-            key,
-            raw,
-            "se esperaba un número de 0 a 1",
-        ),
+        Err(_) => warn(section, key, raw, "se esperaba un número de 0 a 1"),
     }
 }
 

@@ -91,6 +91,21 @@ impl PluginRegistry {
         Self::default()
     }
 
+    /// Resuelve las secciones que no son de ningún plugin.
+    ///
+    /// `font` y `selection` existen aunque no haya nada registrado, así que se
+    /// leen aparte, una vez por carga o recarga: los getters de cada cuadro solo
+    /// consultan el valor ya decidido. Un plugin con el mismo `id` no participa
+    /// de estas claves; su sección la aplica el bucle de plugins.
+    fn apply_native_sections(&mut self, configs: &BTreeMap<String, PluginConfig>) {
+        if let Some(cfg) = configs.get(crate::native::FONT_SECTION) {
+            self.native_font = crate::native::font_from_config(cfg);
+        }
+        if let Some(cfg) = configs.get(crate::native::SELECTION_SECTION) {
+            self.native_mouse_policy = crate::native::mouse_policy_from_config(cfg);
+        }
+    }
+
     /// Tipografía de fábrica, que se usa cuando ningún plugin aporta una.
     pub fn native_font(&self) -> &crate::native::Font {
         &self.native_font
@@ -271,17 +286,10 @@ impl PluginRegistry {
         map
     }
 
-    /// Aplica la configuración leída del archivo a cada plugin registrado correspondiente,
-    /// actualizando también su estado `enabled`.
+    /// Aplica la configuración leída del archivo: primero las secciones nativas y
+    /// después cada plugin registrado, actualizando también su `enabled`.
     pub fn load_configs(&mut self, configs: &BTreeMap<String, PluginConfig>) {
-        // Las secciones nativas se resuelven aquí, una vez por carga o recarga:
-        // los getters por cuadro solo leen el valor ya decidido.
-        if let Some(cfg) = configs.get(crate::native::FONT_SECTION) {
-            self.native_font = crate::native::font_from_config(cfg);
-        }
-        if let Some(cfg) = configs.get(crate::native::SELECTION_SECTION) {
-            self.native_mouse_policy = crate::native::mouse_policy_from_config(cfg);
-        }
+        self.apply_native_sections(configs);
         for entry in &mut self.plugins {
             if let Some(cfg) = configs.get(entry.plugin.id()) {
                 if let Some(enabled) = cfg.get_bool("enabled") {
