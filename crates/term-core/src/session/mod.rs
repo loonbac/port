@@ -174,8 +174,9 @@ impl Session {
     /// Hace falta para traducir una imagen a celdas y para saber cuántas filas
     /// baja el cursor al pintarla.
     pub fn set_cell_size(&mut self, width: usize, height: usize) {
-        self.graphics.set_cell_size(width, height);
-        self.dirty.set(true);
+        if self.graphics.set_cell_size(width, height) {
+            self.dirty.set(true);
+        }
     }
 
     /// Bytes de salida esperando a ser parseados.

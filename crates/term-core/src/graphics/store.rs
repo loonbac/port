@@ -41,9 +41,16 @@ pub enum EncodedFormat {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Pixels {
     /// RGBA de 8 bits por canal, ya decodificado.
-    Rgba { width: usize, height: usize, data: Vec<u8> },
+    Rgba {
+        width: usize,
+        height: usize,
+        data: Vec<u8>,
+    },
     /// Imagen comprimida: la UI la decodifica al pintar.
-    Encoded { format: EncodedFormat, bytes: Vec<u8> },
+    Encoded {
+        format: EncodedFormat,
+        bytes: Vec<u8>,
+    },
 }
 
 impl Pixels {
@@ -166,9 +173,18 @@ impl Store {
     }
 
     /// Tamaño real de una celda en píxeles, que fija la UI.
-    pub fn set_cell_size(&mut self, width: usize, height: usize) {
-        self.cell_width = width.max(1);
-        self.cell_height = height.max(1);
+    ///
+    /// Devuelve si cambió: la UI lo llama en cada cuadro y no debe despertar la
+    /// sesión cuando el tamaño de la celda sigue siendo el mismo.
+    #[must_use]
+    pub fn set_cell_size(&mut self, width: usize, height: usize) -> bool {
+        let (width, height) = (width.max(1), height.max(1));
+        if self.cell_width == width && self.cell_height == height {
+            return false;
+        }
+        self.cell_width = width;
+        self.cell_height = height;
+        true
     }
 
     /// Coloca un sixel en el cursor y devuelve las filas que ocupa.
@@ -276,7 +292,6 @@ impl Store {
         !self.placements.is_empty()
     }
 
-
     fn transmit(&mut self, transmission: Transmission, at: Origin) -> Effect {
         let mut effect = Effect::nothing();
 
@@ -292,7 +307,10 @@ impl Store {
             return effect;
         }
 
-        let payload = match (&transmission.payload, self.chunked.remove(&transmission.image)) {
+        let payload = match (
+            &transmission.payload,
+            self.chunked.remove(&transmission.image),
+        ) {
             (Payload::Inline(bytes), Some(mut pending)) => {
                 pending.extend_from_slice(bytes);
                 Payload::Inline(pending)
@@ -382,9 +400,7 @@ impl Store {
         let columns = columns
             .unwrap_or_else(|| self.ceil_columns(pixel_width))
             .max(1);
-        let rows = rows
-            .unwrap_or_else(|| self.ceil_rows(pixel_height))
-            .max(1);
+        let rows = rows.unwrap_or_else(|| self.ceil_rows(pixel_height)).max(1);
         let anchor = if at.alternate {
             Anchor::Screen(at.row.saturating_add(row_offset))
         } else {
@@ -419,7 +435,6 @@ impl Store {
         pixels.div_ceil(self.cell_height)
     }
 }
-
 
 /// Convierte la carga recibida en píxeles o en una imagen comprimida.
 ///
@@ -499,4 +514,3 @@ fn png_dimensions(bytes: &[u8]) -> Option<(usize, usize)> {
     }
     Some((width, height))
 }
-

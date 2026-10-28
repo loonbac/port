@@ -3861,6 +3861,7 @@ name = "port"
 version = "0.1.10"
 dependencies = [
  "gpui",
+ "image",
  "port-plugin-api",
  "port-plugin-herdr",
  "port-plugin-selection",

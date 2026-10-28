@@ -179,7 +179,7 @@ fn sixel_palette_definition_rgb_percentages_and_selection() {
 
             // Columna 0: rojo puro
             for row in 0..6 {
-                let idx = (row * img.width + 0) * 4;
+                let idx = row * img.width * 4;
                 assert_eq!(&img.rgba[idx..idx + 4], [255, 0, 0, 255]);
             }
             // Columna 1: verde puro
@@ -300,21 +300,21 @@ fn sixel_vertical_pixels_bit_mapping() {
             assert_eq!(img.height, 6);
 
             // Columna 0 ('@'): fila 0 roja, filas 1..6 negras
-            assert_eq!(&img.rgba[(0 * 3 + 0) * 4..(0 * 3 + 0) * 4 + 4], [255, 0, 0, 255]);
+            assert_eq!(&img.rgba[0..4], [255, 0, 0, 255]);
             for row in 1..6 {
-                let idx = (row * 3 + 0) * 4;
+                let idx = row * 3 * 4;
                 assert_eq!(&img.rgba[idx..idx + 4], [0, 0, 0, 255]);
             }
 
             // Columna 1 ('A'): fila 1 roja, filas 0, 2..6 negras
-            assert_eq!(&img.rgba[(1 * 3 + 1) * 4..(1 * 3 + 1) * 4 + 4], [255, 0, 0, 255]);
+            assert_eq!(&img.rgba[4 * 4..4 * 4 + 4], [255, 0, 0, 255]);
             for row in [0, 2, 3, 4, 5] {
                 let idx = (row * 3 + 1) * 4;
                 assert_eq!(&img.rgba[idx..idx + 4], [0, 0, 0, 255]);
             }
 
             // Columna 2 ('_'): fila 5 roja, filas 0..5 negras
-            assert_eq!(&img.rgba[(5 * 3 + 2) * 4..(5 * 3 + 2) * 4 + 4], [255, 0, 0, 255]);
+            assert_eq!(&img.rgba[17 * 4..17 * 4 + 4], [255, 0, 0, 255]);
             for row in 0..5 {
                 let idx = (row * 3 + 2) * 4;
                 assert_eq!(&img.rgba[idx..idx + 4], [0, 0, 0, 255]);

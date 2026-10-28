@@ -22,6 +22,9 @@ port-plugin-selection = { workspace = true }
 # Detección de estado de agentes sin OSC (manifiestos herdr, T3): `regex` para
 # las reglas, `toml` + `serde` para cargarlos. Ya están fijados en el lock del
 # workspace; no entra ningún paquete nuevo.
+# Imágenes sixel y kitty: GPUI ya compila `image` para sus decodificadores, así
+# que se usa la misma versión para convertir píxeles a BGRA sin sumar crates.
+image = "0.25"
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"

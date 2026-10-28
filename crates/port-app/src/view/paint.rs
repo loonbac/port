@@ -15,16 +15,18 @@ use gpui::{
     fill, point, px, rgb, size, App, Bounds, Font, FontFallbacks, FontStyle, FontWeight, Pixels,
     TextRun, Window,
 };
-use port_term_core::frame::{Frame, Rgb, Run, Style};
+use port_term_core::frame::{Frame, PlacedImage, Rgb, Run, Style};
 use port_term_core::session::MousePolicy;
 
 use crate::metrics::Metrics;
+use crate::view::images::ImageCache;
 
 /// Pinta el cuadro completo: quads de fondo, glifos geométricos y texto.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_frame(
     bounds: Bounds<Pixels>,
     frame: &Frame,
+    images: &mut ImageCache,
     policy: MousePolicy,
     metrics: &Metrics,
     default_bg: Rgb,
@@ -68,6 +70,11 @@ pub(crate) fn paint_frame(
     let origin_x = bounds.origin.x + padding;
     let origin_y = bounds.origin.y + padding;
 
+    // Primera pasada: todos los fondos. Un glifo puede tener más tinta que su
+    // celda, y GPUI dibuja encima lo que se pinta después: si cada run pintara su
+    // fondo junto a sus glifos, el fondo de la celda de la derecha y el de la
+    // fila de abajo recortarían la tinta que sobresale. Con las dos pasadas
+    // separadas los glifos quedan encima de todos los fondos.
     for (row_index, row) in frame.rows.iter().enumerate() {
         let top = origin_y + cell_height * row_index as f32;
         let mut left = origin_x;
@@ -101,6 +108,34 @@ pub(crate) fn paint_frame(
                     color(style.bg),
                 ));
             }
+
+            left += width;
+        }
+    }
+
+    // Imágenes que van por debajo del texto, antes de escribir nada.
+    paint_images(
+        &frame.images,
+        images,
+        origin_x,
+        origin_y,
+        cw_f32,
+        ch_f32,
+        true,
+        window,
+    );
+
+    // Segunda pasada: los glifos, ya sobre todos los fondos.
+    for (row_index, row) in frame.rows.iter().enumerate() {
+        let top = origin_y + cell_height * row_index as f32;
+        let mut left = origin_x;
+
+        for (run_index, run) in row.runs.iter().enumerate() {
+            let is_cursor = frame
+                .cursor_run
+                .is_some_and(|cursor| cursor.row == row_index && cursor.run_index == run_index);
+            let style = style_of(run, is_cursor);
+            let width = cell_width * run.columns as f32;
 
             if !run.text.trim().is_empty() {
                 let fg_color = color(style.fg);
@@ -182,6 +217,58 @@ pub(crate) fn paint_frame(
 
             left += width;
         }
+    }
+
+    // Imágenes que van por encima del texto: el último trazo del cuadro.
+    paint_images(
+        &frame.images,
+        images,
+        origin_x,
+        origin_y,
+        cw_f32,
+        ch_f32,
+        false,
+        window,
+    );
+}
+
+/// Pinta las imágenes colocadas de una de las dos capas.
+///
+/// Se llama dos veces: antes del texto para las que van debajo (`z < 0`) y
+/// después para el resto. Así un programa puede dejar una imagen de fondo y
+/// escribir encima sin que el texto desaparezca, que es lo que promete el
+/// z-index del protocolo de kitty.
+#[allow(clippy::too_many_arguments)]
+fn paint_images(
+    images: &[PlacedImage],
+    cache: &mut ImageCache,
+    origin_x: Pixels,
+    origin_y: Pixels,
+    cell_width: f32,
+    cell_height: f32,
+    below_text: bool,
+    window: &mut Window,
+) {
+    for placed in images {
+        if (placed.z < 0) != below_text {
+            continue;
+        }
+        let Some(render) = cache.render(placed) else {
+            continue;
+        };
+        let left = origin_x + px(cell_width * placed.column as f32);
+        let top = origin_y + px(cell_height * placed.row as f32);
+        let bounds = Bounds::new(
+            point(left, top),
+            size(
+                px(cell_width * placed.columns as f32),
+                px(cell_height * placed.rows as f32),
+            ),
+        );
+        // El canvas recorta lo que se sale de la rejilla, así que una imagen
+        // que empieza por encima del borde superior se dibuja parcialmente sin
+        // ninguna cuenta extra aquí.
+        let _ = window.paint_image(bounds, gpui::Corners::default(), render, 0, false);
     }
 }
 
