@@ -54,6 +54,53 @@ sin que el núcleo sepa que existe.
   congelar la sesión para siempre.
 - **Configuración legible** — un único archivo de texto plano con bloques de
   código Markdown por plugin, recargado al guardar.
+- **Imágenes en línea** — sixel y el protocolo de gráficos de kitty se pintan
+  sobre la rejilla, se desplazan con el texto en la pantalla primaria y quedan
+  fijos en la pantalla alterna.
+- **Un torrente de salida no crece en memoria** — un programa que escribe más
+  rápido de lo que el parser lee encuentra una cola acotada y un presupuesto de
+  parseo por cuadro, así que el final del flujo se sigue pintando.
+
+## Imágenes
+
+PORT habla los dos protocolos con los que un terminal muestra imágenes, y las
+pinta sobre la rejilla en vez de simularlas con caracteres de bloque.
+
+| Protocolo | Qué funciona |
+|---|---|
+| Sixel (`ESC P ... q`) | La paleta de 16 colores del VT340 y sus redefiniciones `#n;2;r;g;b`, repeticiones `!` y control de bandas `$`/`-`. La imagen aparece en el cursor y el cursor queda debajo. |
+| Kitty graphics (`ESC _ G`) | `a=t` transmite (base64 en línea, archivo con `t=f`, temporal con `t=t`), `a=T` transmite y muestra, `a=p` coloca una imagen ya cargada, `a=d` borra, `a=q` consulta y se responde `OK`. RGBA/RGB crudo (`f=24`, `f=32`) y PNG (`f=100`, lo decodifica la UI), transferencias por partes, `z` para poner la imagen encima o debajo del texto, geometría `c`/`r` y `C`/`R`, `C=1` para no mover el cursor. |
+
+Cualquiera de estos comandos muestra una imagen en PORT:
+
+```sh
+chafa -f sixel foto.png   # sixel con chafa
+img2sixel foto.png        # libsixel
+kitten icat foto.png      # kitty graphics
+```
+
+Dos cosas que conviene saber. Las imágenes acompañan al texto mientras el
+scrollback sigue creciendo; cuando se llena, el contador de líneas absolutas deja
+de avanzar y una imagen que se desplace lo suficiente deja de seguirlo. Y un
+terminal no es un visor de fotos: una imagen está limitada a 32 MiB y el almacén
+completo a 64 MiB, descartando primero la colocación más vieja. No hay animación
+por cuadros, ni marcadores unicode, ni transferencias de varios cuadros.
+
+## Capas de depuración
+
+Emite `OSC 556` y PORT dibuja capas de diagnóstico sobre la rejilla. Lo controla
+el programa, así que no aparece nada que nadie haya pedido.
+
+| Payload | Efecto |
+|---|---|
+| `ESC ] 556 ST` | enciende todas las capas |
+| `ESC ] 556 ; hud ST` | una caja con contadores medidos: tamaño de la rejilla, bytes pendientes en el PTY, bytes descartados, imágenes colocadas, posición del scrollback y si está activa la pantalla alterna |
+| `ESC ] 556 ; grid ST` | una línea fina por borde de celda, que es como se ve un carácter ancho o un salto de línea desfasado |
+| `ESC ] 556 ; off ST` | apaga todo |
+
+El HUD muestra lo que la terminal guarda de verdad, así que es la forma más
+rápida de ver los límites de ingesta en acción: `pending` es lo que espera en la
+cola acotada y `dropped` lo que el tope descartó.
 
 ## Atajos de teclado
 
@@ -105,6 +152,13 @@ enabled = true
 
 El archivo se vigila: al guardarlo los cambios se aplican al instante,
 incluyendo tamaño de fuente, opacidad y qué plugins están activos.
+
+Dos secciones no necesitan ningún plugin, porque un terminal no funciona sin
+ellas: ````font```` (familia y tamaño opcional) y ````selection```` (`forward_clicks`,
+`forward_drag`, `forward_motion`, `shift_selects`, `copy_on_select`,
+`word_on_double_click`, `line_on_triple_click`, `highlight_color` y
+`highlight_opacity`). PORT las parsea al cargar el archivo, no en cada cuadro, y un
+plugin con hook de apariencia o de ratón sigue pudiendo reemplazarlas.
 
 ## Instalación
 
@@ -336,7 +390,6 @@ forma independiente.
 | Plugin | Hooks | Qué hace |
 |---|---|---|
 | `transparency` | `AppearanceHook` | Opacidad del fondo de la ventana |
-| `font` | `AppearanceHook` | Familia, tamaño y fuentes de respaldo |
 | `font-zoom` | `AppearanceHook` | Estado del tamaño de fuente y operaciones de zoom (sin atajos) |
 | `shortcuts` | — | Asocia combinaciones de teclas a callbacks |
 | `herdr` | `AppearanceHook`, `InputHook`, `LayoutHook`, `SpaceHook` | Barra lateral de espacios, pestañas, detección de procesos en vivo, estado de agentes por sesión, ancho ajustable y color acento del wallpaper |

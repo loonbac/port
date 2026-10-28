@@ -256,3 +256,83 @@ fn spawn_session_with_runs_the_given_program_and_activates_it() {
         "la sesión 0 debe seguir con su shell por defecto:\n{first}"
     );
 }
+
+/// Un programa que diluvia la terminal no puede crecer la memoria sin tope ni
+/// dejar en pantalla el principio del flujo: la cola se acota y lo que se pinta
+/// es el final.
+#[test]
+fn a_firehose_keeps_memory_bounded_and_paints_the_tail() {
+    let mut config = plain_shell();
+    config.args = vec![
+        "-c".to_string(),
+        "head -c 33554432 /dev/zero | tr '\\0' 'A'; printf 'FIN-DEL-FLOOD\\n'".to_string(),
+    ];
+    let mut session = Session::spawn(config, GridSize::new(80, 12)).expect("sesión");
+
+    assert_eq!(
+        session.dropped_output_bytes(),
+        0,
+        "una sesión recién arrancada no ha descartado nada"
+    );
+
+    // Se deja correr el diluvio SIN bombear: el tope lo aplica el hilo lector, y
+    // es justo el caso que antes crecía sin límite.
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(5) {
+        let pending = session.pending_output_bytes();
+        assert!(
+            pending <= port_term_core::pty::MAX_PENDING_BYTES,
+            "la cola creció más allá del tope: {pending} bytes"
+        );
+        if session.dropped_output_bytes() > 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        session.dropped_output_bytes() > 0,
+        "el diluvio no llegó a desbordar la cola"
+    );
+
+    let text = pump_until_quiet(
+        &mut session,
+        Duration::from_millis(300),
+        Duration::from_secs(30),
+    );
+    assert!(
+        text.contains("FIN-DEL-FLOOD"),
+        "no se pintó el final del flujo:\n{text}"
+    );
+}
+
+/// Un solo cuadro no puede parsear un diluvio completo: la cuota por llamada es
+/// lo que mantiene la interfaz respondiendo.
+#[test]
+fn one_pump_never_parses_more_than_its_budget() {
+    let mut config = plain_shell();
+    config.args = vec![
+        "-c".to_string(),
+        "head -c 4194304 /dev/zero | tr '\\0' 'B'".to_string(),
+    ];
+    let mut session = Session::spawn(config, GridSize::new(80, 12)).expect("sesión");
+
+    let budget = port_term_core::session::Session::PUMP_BUDGET_BYTES;
+    let start = Instant::now();
+    while session.pending_output_bytes() < budget * 2 {
+        assert!(
+            start.elapsed() < Duration::from_secs(30),
+            "el diluvio no llegó a encolarse"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    let before = session.pending_output_bytes();
+    assert!(session.pump(), "el cuadro debía encontrar salida");
+    let after = session.pending_output_bytes();
+
+    let parsed = before.saturating_sub(after);
+    assert!(
+        parsed <= budget,
+        "un solo pump parseó {parsed} bytes, más que la cuota de {budget}"
+    );
+}

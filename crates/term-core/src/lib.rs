@@ -8,6 +8,8 @@
 //!
 //! - [`input`]: traducción de una tecla a los bytes que espera el programa del
 //!   otro lado del PTY. Es lógica pura y headless, así que se prueba sola.
+//! - [`overlay`]: capas de depuración que el programa enciende por OSC 556
+//!   (rejilla y HUD). Es estado, no pintura: la UI decide cómo se ve.
 //! - [`frame`]: los datos que la UI necesita para pintar (filas, runs y color).
 //!   Aísla a la UI de los tipos de `alacritty_terminal`.
 //! - [`pty`]: el proceso de shell y su tubería. Adaptador del sistema operativo.
@@ -16,7 +18,9 @@
 //!   nombre del ejecutable) aislando las diferencias entre sistemas.
 
 pub mod frame;
+pub mod graphics;
 pub mod input;
+pub mod overlay;
 pub mod program_status;
 pub mod pty;
 pub mod session;

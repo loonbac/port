@@ -16,12 +16,12 @@ port-plugin-api = { path = "../plugin-api" }
 # herdr draws with GPUI, so it is compiled into PORT itself (see the root
 # Cargo.toml for the git dependency and the port.git patch).
 port-plugin-herdr = { workspace = true }
-# La politica de raton y seleccion tambien es in-process: la UI la lee en cada
-# gesto sin cruzar el protocolo de los plugins de tienda.
-port-plugin-selection = { workspace = true }
 # Detección de estado de agentes sin OSC (manifiestos herdr, T3): `regex` para
 # las reglas, `toml` + `serde` para cargarlos. Ya están fijados en el lock del
 # workspace; no entra ningún paquete nuevo.
+# Imágenes sixel y kitty: GPUI ya compila `image` para sus decodificadores, así
+# que se usa la misma versión para convertir píxeles a BGRA sin sumar crates.
+image = "0.25"
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"

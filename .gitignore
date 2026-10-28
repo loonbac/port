@@ -11,3 +11,6 @@ __pycache__/
 # genera GitHub Actions, no se versionan).
 /dist
 /result
+
+# Registros del banco de pruebas (cifras locales, no se versionan).
+/bench

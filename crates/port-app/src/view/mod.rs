@@ -9,6 +9,7 @@
 //! selección en [`mouse`] y el diálogo en [`close_prompt`].
 
 mod close_prompt;
+mod images;
 mod mouse;
 mod paint;
 
@@ -31,6 +32,7 @@ use crate::agent::{
     is_known_agent, manifest_id_for_bin, AgentTracker, ScreenSignals, SessionSignals,
 };
 use crate::metrics::Metrics;
+use images::ImageCache;
 
 use close_prompt::render_close_prompt;
 use mouse::{
@@ -57,6 +59,8 @@ pub struct TerminalView {
     /// cuál está pulsado para reportar el movimiento y la liberación. Vive aquí
     /// por la misma razón que la bandera de arrastre.
     program_drag: Rc<Cell<Option<TerminalMouseButton>>>,
+    /// Imágenes ya convertidas a formato de GPUI, por identificador.
+    images: Rc<RefCell<ImageCache>>,
 }
 
 impl TerminalView {
@@ -80,6 +84,7 @@ impl TerminalView {
             agent_tracker: RefCell::new(AgentTracker::new()),
             drag_selecting: Rc::new(Cell::new(false)),
             program_drag: Rc::new(Cell::new(None)),
+            images: Rc::new(RefCell::new(ImageCache::default())),
         }
     }
 }
@@ -119,6 +124,12 @@ impl Render for TerminalView {
         let grid = metrics.grid_for(usable_w, usable_h);
 
         let mut session_mgr = self.session_manager.borrow_mut();
+        // El núcleo no sabe cuánto mide una celda: se lo dice la UI, y con eso
+        // traduce una imagen a filas y columnas y sabe cuánto baja el cursor.
+        session_mgr.active_session_mut().set_cell_size(
+            metrics.cell_width.round() as usize,
+            metrics.cell_height.round() as usize,
+        );
 
         // 1. Si algún plugin solicitó crear una nueva sesión (Ctrl+Shift+T o Ctrl+Alt+T)
         if plugins.take_new_session_request() {
@@ -256,6 +267,9 @@ impl Render for TerminalView {
         }
 
         let frame = session_mgr.frame();
+        // Las imágenes ya convertidas se conservan entre cuadros, pero solo
+        // mientras sigan colocadas: lo que el programa borró se suelta aquí.
+        self.images.borrow_mut().retain(&frame);
         // La sesión es la única fuente de verdad de la política: la vista la
         // lee aquí, con el préstamo que ya tiene, y no guarda copia propia.
         let policy = session_mgr.active_session().mouse_policy();
@@ -271,6 +285,8 @@ impl Render for TerminalView {
         }
 
         let focus = self.focus_handle.clone();
+        // El canvas se reconstruye en cada cuadro y vive más que este préstamo.
+        let images = Rc::clone(&self.images);
 
         let mut root = div()
             .flex()
@@ -522,9 +538,11 @@ impl Render for TerminalView {
                             }
                         },
                         move |bounds, (), window, cx| {
+                            let mut images = images.borrow_mut();
                             paint_frame(
                                 bounds,
                                 &frame,
+                                &mut images,
                                 policy,
                                 &metrics,
                                 effective_bg,

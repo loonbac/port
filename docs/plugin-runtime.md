@@ -151,3 +151,28 @@ procesos solo convertiría un problema perceptible en un problema invisible.
   se serializa. Los plugins con UI rica (`herdr`) siguen siendo in-process.
 - El canal es JSON sobre texto. Es legible y basta, pero un canal binario con el
   mismo contrato reduciría el coste de invocación si alguna vez hace falta.
+
+## Lo que no es un plugin
+
+PORT es una terminal mínima y rápida, personalizable con plugins. Eso deja dos
+categorías, y conviene no confundirlas:
+
+| Categoría | Criterio | Ejemplo |
+| --- | --- | --- |
+| Sección nativa | La terminal no funciona sin ello, y el valor se lee una vez al cargar el archivo | ````font````, ````selection```` |
+| Plugin | Reemplaza o añade comportamiento, y se puede apagar sin dejar la terminal inservible | `herdr`, `shortcuts`, `close-guard`, `transparency`, `font-zoom` |
+
+Las dos secciones nativas viven en el mismo archivo de configuración y con los
+mismos nombres y claves que tenían cuando eran plugins, así que un `config.md`
+antiguo sigue sirviendo. Se parsean al cargar el archivo, nunca por cuadro: los
+getters que la UI consulta en cada refresco solo leen el valor ya resuelto.
+
+Un plugin sigue teniendo la última palabra. El orden de precedencia es:
+
+1. hooks in-process (apariencia, ratón),
+2. plugins externos vivos instalados por URL,
+3. la sección nativa del archivo,
+4. el default que pasa el llamador (la UI, con su zoom vigente).
+
+Es lo que permite que `font-zoom`, un plugin, siga mandando sobre el tamaño
+mientras la familia sale del archivo sin instalar nada.

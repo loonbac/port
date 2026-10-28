@@ -15,16 +15,18 @@ use gpui::{
     fill, point, px, rgb, size, App, Bounds, Font, FontFallbacks, FontStyle, FontWeight, Pixels,
     TextRun, Window,
 };
-use port_term_core::frame::{Frame, Rgb, Run, Style};
+use port_term_core::frame::{Frame, PlacedImage, Rgb, Run, Style};
 use port_term_core::session::MousePolicy;
 
 use crate::metrics::Metrics;
+use crate::view::images::ImageCache;
 
 /// Pinta el cuadro completo: quads de fondo, glifos geométricos y texto.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_frame(
     bounds: Bounds<Pixels>,
     frame: &Frame,
+    images: &mut ImageCache,
     policy: MousePolicy,
     metrics: &Metrics,
     default_bg: Rgb,
@@ -68,6 +70,11 @@ pub(crate) fn paint_frame(
     let origin_x = bounds.origin.x + padding;
     let origin_y = bounds.origin.y + padding;
 
+    // Primera pasada: todos los fondos. Un glifo puede tener más tinta que su
+    // celda, y GPUI dibuja encima lo que se pinta después: si cada run pintara su
+    // fondo junto a sus glifos, el fondo de la celda de la derecha y el de la
+    // fila de abajo recortarían la tinta que sobresale. Con las dos pasadas
+    // separadas los glifos quedan encima de todos los fondos.
     for (row_index, row) in frame.rows.iter().enumerate() {
         let top = origin_y + cell_height * row_index as f32;
         let mut left = origin_x;
@@ -101,6 +108,34 @@ pub(crate) fn paint_frame(
                     color(style.bg),
                 ));
             }
+
+            left += width;
+        }
+    }
+
+    // Imágenes que van por debajo del texto, antes de escribir nada.
+    paint_images(
+        &frame.images,
+        images,
+        origin_x,
+        origin_y,
+        cw_f32,
+        ch_f32,
+        true,
+        window,
+    );
+
+    // Segunda pasada: los glifos, ya sobre todos los fondos.
+    for (row_index, row) in frame.rows.iter().enumerate() {
+        let top = origin_y + cell_height * row_index as f32;
+        let mut left = origin_x;
+
+        for (run_index, run) in row.runs.iter().enumerate() {
+            let is_cursor = frame
+                .cursor_run
+                .is_some_and(|cursor| cursor.row == row_index && cursor.run_index == run_index);
+            let style = style_of(run, is_cursor);
+            let width = cell_width * run.columns as f32;
 
             if !run.text.trim().is_empty() {
                 let fg_color = color(style.fg);
@@ -182,6 +217,187 @@ pub(crate) fn paint_frame(
 
             left += width;
         }
+    }
+
+    // Imágenes que van por encima del texto: el último trazo del cuadro.
+    paint_images(
+        &frame.images,
+        images,
+        origin_x,
+        origin_y,
+        cw_f32,
+        ch_f32,
+        false,
+        window,
+    );
+
+    if frame.debug.flags.any() {
+        paint_debug(
+            bounds, frame, &regular, font_size, origin_x, origin_y, cw_f32, ch_f32, window, cx,
+        );
+    }
+}
+
+/// Pinta las imágenes colocadas de una de las dos capas.
+///
+/// Se llama dos veces: antes del texto para las que van debajo (`z < 0`) y
+/// después para el resto. Así un programa puede dejar una imagen de fondo y
+/// escribir encima sin que el texto desaparezca, que es lo que promete el
+/// z-index del protocolo de kitty.
+#[allow(clippy::too_many_arguments)]
+fn paint_images(
+    images: &[PlacedImage],
+    cache: &mut ImageCache,
+    origin_x: Pixels,
+    origin_y: Pixels,
+    cell_width: f32,
+    cell_height: f32,
+    below_text: bool,
+    window: &mut Window,
+) {
+    for placed in images {
+        if (placed.z < 0) != below_text {
+            continue;
+        }
+        let Some(render) = cache.render(placed) else {
+            continue;
+        };
+        let left = origin_x + px(cell_width * placed.column as f32);
+        let top = origin_y + px(cell_height * placed.row as f32);
+        let bounds = Bounds::new(
+            point(left, top),
+            size(
+                px(cell_width * placed.columns as f32),
+                px(cell_height * placed.rows as f32),
+            ),
+        );
+        // El canvas recorta lo que se sale de la rejilla, así que una imagen
+        // que empieza por encima del borde superior se dibuja parcialmente sin
+        // ninguna cuenta extra aquí.
+        let _ = window.paint_image(bounds, gpui::Corners::default(), render, 0, false);
+    }
+}
+
+/// Pinta las capas de depuración que el programa pidió por OSC 556.
+///
+/// La rejilla va primero, debajo de todo, para que las líneas no tapen el
+/// texto. El HUD se ancla a la esquina superior derecha, que es donde menos
+/// molesta: quien lo enciende ya sabe que está depurando.
+#[allow(clippy::too_many_arguments)]
+fn paint_debug(
+    bounds: Bounds<Pixels>,
+    frame: &Frame,
+    font: &Font,
+    font_size: Pixels,
+    origin_x: Pixels,
+    origin_y: Pixels,
+    cell_width: f32,
+    cell_height: f32,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let state = frame.debug;
+
+    if state.flags.grid {
+        let line = color(Rgb {
+            r: 0x3a,
+            g: 0x3a,
+            b: 0x46,
+        })
+        .opacity(0.7);
+        for column in 0..=frame.columns {
+            let x = origin_x + px(cell_width * column as f32);
+            window.paint_quad(fill(
+                Bounds::new(point(x, origin_y), size(px(1.0), bounds.size.height)),
+                line,
+            ));
+        }
+        for row in 0..=frame.rows.len() {
+            let y = origin_y + px(cell_height * row as f32);
+            window.paint_quad(fill(
+                Bounds::new(point(origin_x, y), size(bounds.size.width, px(1.0))),
+                line,
+            ));
+        }
+    }
+
+    if !state.flags.hud {
+        return;
+    }
+
+    let stats = state.stats;
+    let lines = [
+        format!("grid {}x{}", stats.columns, stats.rows),
+        format!("pending {}", bytes(stats.pending_bytes as u64)),
+        format!("dropped {}", bytes(stats.dropped_bytes)),
+        format!("images {}", stats.images),
+        format!(
+            "scroll {}{}",
+            stats.scrollback,
+            if stats.alternate { " alt" } else { "" }
+        ),
+    ];
+
+    // La fuente del terminal es monoespaciada, así que el ancho del cuadro sale
+    // de contar caracteres: no hace falta medir el texto.
+    let pad = 6.0_f32;
+    let widest = lines.iter().map(|line| line.len()).max().unwrap_or(1) as f32;
+    let box_width = widest * cell_width + pad * 2.0;
+    let box_height = cell_height * lines.len() as f32 + pad * 2.0;
+    let box_origin = point(
+        bounds.origin.x + bounds.size.width - px(box_width) - px(pad),
+        bounds.origin.y + px(pad),
+    );
+    window.paint_quad(fill(
+        Bounds::new(box_origin, size(px(box_width), px(box_height))),
+        color(Rgb {
+            r: 0x10,
+            g: 0x10,
+            b: 0x18,
+        })
+        .opacity(0.85),
+    ));
+
+    for (index, line) in lines.iter().enumerate() {
+        let text_run = TextRun {
+            len: line.len(),
+            font: font.clone(),
+            color: color(Rgb {
+                r: 0xff,
+                g: 0xff,
+                b: 0xff,
+            }),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        let text_origin = point(
+            box_origin.x + px(pad),
+            box_origin.y + px(pad + cell_height * index as f32),
+        );
+        window
+            .text_system()
+            .shape_line(
+                line.clone().into(),
+                font_size,
+                &[text_run],
+                Some(px(cell_width)),
+            )
+            .paint(text_origin, px(cell_height), window, cx)
+            .ok();
+    }
+}
+
+/// Formatea un tamaño de bytes para el HUD.
+fn bytes(value: u64) -> String {
+    const KIB: u64 = 1024;
+    const MIB: u64 = KIB * 1024;
+    if value >= MIB {
+        format!("{:.1} MiB", value as f64 / MIB as f64)
+    } else if value >= KIB {
+        format!("{:.1} KiB", value as f64 / KIB as f64)
+    } else {
+        format!("{value} B")
     }
 }
 

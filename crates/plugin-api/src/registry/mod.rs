@@ -26,7 +26,9 @@ use crate::config::{ConfigFile, PluginConfig};
 use crate::health::RegisteredPlugin;
 use crate::hooks::Plugin;
 use crate::host::ExternalPlugin;
+use crate::native;
 use crate::services::Services;
+use port_term_core::session::MousePolicy;
 
 pub use crate::health::{PluginHealth, DEFAULT_HOOK_BUDGET, DEFAULT_PROBE_COOLDOWN};
 
@@ -58,6 +60,14 @@ pub struct PluginRegistry {
     config_path: RefCell<Option<PathBuf>>,
     last_modified: Cell<Option<SystemTime>>,
     services: Arc<Services>,
+    /// Tipografía que PORT trae de fábrica, ya resuelta desde el archivo.
+    ///
+    /// No es un plugin: la terminal necesita una fuente siempre. Un
+    /// `AppearanceHook` o un externo instalado la reemplazan, y sin nadie que
+    /// hable manda esto.
+    native_font: crate::native::Font,
+    /// Política de ratón de fábrica, con la misma precedencia que la fuente.
+    native_mouse_policy: MousePolicy,
 }
 
 impl Default for PluginRegistry {
@@ -70,6 +80,8 @@ impl Default for PluginRegistry {
             config_path: RefCell::new(None),
             last_modified: Cell::new(None),
             services: Arc::new(Services::new()),
+            native_font: crate::native::Font::default(),
+            native_mouse_policy: MousePolicy::default(),
         }
     }
 }
@@ -78,6 +90,41 @@ impl PluginRegistry {
     /// Crea un registro de plugins vacío con el presupuesto de hook por defecto.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Resuelve las secciones que no son de ningún plugin.
+    ///
+    /// `font` y `selection` existen aunque no haya nada registrado, así que se
+    /// leen aparte, una vez por carga o recarga: los getters de cada cuadro solo
+    /// consultan el valor ya decidido. Un plugin con el mismo `id` no participa
+    /// de estas claves; su sección la aplica el bucle de plugins.
+    fn apply_native_sections(&mut self, configs: &BTreeMap<String, PluginConfig>) {
+        if let Some(cfg) = configs.get(native::FONT_SECTION) {
+            self.native_font = native::font_from_config(cfg);
+        }
+        if let Some(cfg) = configs.get(native::SELECTION_SECTION) {
+            self.native_mouse_policy = native::mouse_policy_from_config(cfg);
+        }
+    }
+
+    /// Tipografía de fábrica, que se usa cuando ningún plugin aporta una.
+    pub fn native_font(&self) -> &crate::native::Font {
+        &self.native_font
+    }
+
+    /// Fija la tipografía de fábrica (la lee el arranque del archivo).
+    pub fn set_native_font(&mut self, font: crate::native::Font) {
+        self.native_font = font;
+    }
+
+    /// Política de ratón de fábrica, que se usa cuando ningún plugin aporta una.
+    pub fn native_mouse_policy(&self) -> MousePolicy {
+        self.native_mouse_policy
+    }
+
+    /// Fija la política de ratón de fábrica (la lee el arranque del archivo).
+    pub fn set_native_mouse_policy(&mut self, policy: MousePolicy) {
+        self.native_mouse_policy = policy;
     }
 
     /// Presupuesto de tiempo asignado a cada invocación de hook.
@@ -220,6 +267,16 @@ impl PluginRegistry {
     /// incluyendo su estado enabled = true.
     pub fn default_configs(&self) -> BTreeMap<String, PluginConfig> {
         let mut map = BTreeMap::new();
+        // Las dos secciones nativas van en el archivo con los valores del
+        // núcleo: el archivo distribuido y los defaults no pueden divergir.
+        map.insert(
+            crate::native::FONT_SECTION.to_string(),
+            crate::native::font_default_config(&self.native_font),
+        );
+        map.insert(
+            crate::native::SELECTION_SECTION.to_string(),
+            crate::native::mouse_policy_default_config(&self.native_mouse_policy),
+        );
         for entry in &self.plugins {
             let mut cfg = entry.plugin.default_config().unwrap_or_default();
             if !cfg.values.contains_key("enabled") {
@@ -230,9 +287,10 @@ impl PluginRegistry {
         map
     }
 
-    /// Aplica la configuración leída del archivo a cada plugin registrado correspondiente,
-    /// actualizando también su estado `enabled`.
+    /// Aplica la configuración leída del archivo: primero las secciones nativas y
+    /// después cada plugin registrado, actualizando también su `enabled`.
     pub fn load_configs(&mut self, configs: &BTreeMap<String, PluginConfig>) {
+        self.apply_native_sections(configs);
         for entry in &mut self.plugins {
             if let Some(cfg) = configs.get(entry.plugin.id()) {
                 if let Some(enabled) = cfg.get_bool("enabled") {

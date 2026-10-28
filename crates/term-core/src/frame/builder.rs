@@ -324,7 +324,23 @@ pub fn build<T: EventListener>(term: &Term<T>) -> Frame {
         cursor,
         cursor_run,
         display_offset,
+        images: Vec::new(),
+        debug: crate::overlay::State::default(),
     }
+}
+
+/// Construye un cuadro con las imágenes que el almacén tiene por visibles.
+///
+/// La rejilla y las imágenes se resuelven por separado a propósito: el
+/// traductor de celdas no sabe que existe un protocolo de imágenes, y el
+/// almacén no sabe nada de celdas.
+pub fn build_with<T: EventListener>(
+    term: &Term<T>,
+    images: Vec<crate::frame::PlacedImage>,
+) -> Frame {
+    let mut frame = build(term);
+    frame.images = images;
+    frame
 }
 
 /// Añade espacios a la fila, fusionando con el run anterior si ya era de estilo plano.

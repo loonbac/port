@@ -573,7 +573,11 @@ fn after_cooldown_probe_runs_and_fast_call_restores_ok() {
     delay_ms.store(0, Ordering::SeqCst);
     let op = registry.effective_opacity();
     assert_eq!(op, 0.42, "la llamada de prueba debe ejecutarse y aportar");
-    assert_eq!(counter.load(Ordering::SeqCst), 3, "la prueba debe invocar el hook");
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        3,
+        "la prueba debe invocar el hook"
+    );
     assert_eq!(
         registry.plugin_health("dynamic-delay"),
         Some(PluginHealth::Ok),
@@ -615,7 +619,11 @@ fn after_cooldown_probe_runs_and_slow_call_stays_disabled() {
     // La prueba sigue siendo lenta
     delay_ms.store(15, Ordering::SeqCst);
     let _ = registry.effective_opacity();
-    assert_eq!(counter.load(Ordering::SeqCst), 3, "la prueba debe haber corrido una vez");
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        3,
+        "la prueba debe haber corrido una vez"
+    );
     assert_eq!(
         registry.plugin_health("dynamic-delay"),
         Some(PluginHealth::Disabled),

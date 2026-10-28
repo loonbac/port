@@ -24,7 +24,6 @@ use gpui::{
 };
 use port_plugin_api::{CloseDecision, PluginRegistry};
 use port_plugin_herdr::HerdrPlugin;
-use port_plugin_selection::SelectionPlugin;
 use port_term_core::pty::PtyConfig;
 use port_term_core::session::SessionManager;
 
@@ -63,9 +62,8 @@ fn run_terminal() {
         let mut plugin_registry = PluginRegistry::new();
         // herdr dibuja con GPUI, asi que va compilado dentro de PORT.
         plugin_registry.register(HerdrPlugin::new());
-        // La politica de raton y seleccion la posee el plugin: la UI y el
-        // nucleo la consultan antes de cada gesto.
-        plugin_registry.register(SelectionPlugin::new());
+        // La politica de raton y seleccion es nativa: se lee del archivo de
+        // configuracion al cargarlo y no cuesta nada por gesto.
         let close_prompt = Rc::new(RefCell::new(ClosePromptState::default()));
 
         let (config_path, external_configs) = app::bootstrap::load_config(&mut plugin_registry);

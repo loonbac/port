@@ -349,6 +349,10 @@ fn cuadro_de(columnas: usize) -> Frame {
         cursor: None,
         cursor_run: None,
         display_offset: 0,
+        // Un plugin que lee la rejilla no tiene por qué construir imágenes, así
+        // que este cuadro de prueba las deja vacías.
+        images: Vec::new(),
+        debug: Default::default(),
     }
 }
 

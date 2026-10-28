@@ -6,9 +6,11 @@
 mod drop;
 #[cfg(target_os = "linux")]
 mod foreground;
+mod graphics;
 mod grid;
 mod manager;
 mod mouse;
+mod overlay;
 mod paste;
 mod pty;
 

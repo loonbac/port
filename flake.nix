@@ -130,13 +130,12 @@
             cargoLock = {
               lockFile = ./Cargo.lock;
               outputHashes = {
-                # herdr y selection llegan como dependencias git (rutas
-                # in-process de port-plugins). El vendor es el checkout completo
-                # del repositorio, asi que ambos comparten el hash de la misma
-                # revision: master en Cargo.lock. Al mover esa revision hay que
-                # actualizar los dos hashes con el valor que reporta el build.
+                # herdr llega como dependencia git (ruta in-process de
+                # port-plugins). El vendor es el checkout completo del
+                # repositorio, asi que el hash corresponde a la revision que
+                # fija Cargo.lock. Al mover esa revision hay que actualizarlo con
+                # el valor que reporta el build.
                 "port-plugin-herdr-0.1.0" = "sha256-WS9foDcETsLcA2hhUPZJwB3VIkc6RxHhlqe29AYJ3fA=";
-                "port-plugin-selection-0.1.0" = "sha256-WS9foDcETsLcA2hhUPZJwB3VIkc6RxHhlqe29AYJ3fA=";
               };
             };
 

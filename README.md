@@ -48,6 +48,53 @@ plugin can replace core behaviour without the core knowing it exists.
   session forever.
 - **Human-readable configuration** — one plain-text file with Markdown code
   blocks per plugin, hot-reloaded as you save.
+- **Inline images** — sixel and the kitty graphics protocol are painted on the
+  grid, scrolling with the text on the primary screen and staying put on the
+  alternate screen.
+- **A flood cannot grow memory** — a program that writes faster than the parser
+  reads hits a bounded backlog and a per-frame parse budget, so the tail keeps
+  painting and memory stays flat.
+
+## Images
+
+PORT speaks the two protocols terminals use to show pictures, and paints them on
+the grid instead of faking them with block characters.
+
+| Protocol | What works |
+|---|---|
+| Sixel (`ESC P ... q`) | The 16-colour VT340 palette plus `#n;2;r;g;b` redefinitions, `!` repeats and `$`/`-` band control. The image lands at the cursor and the cursor ends below it. |
+| Kitty graphics (`ESC _ G`) | `a=t` transmit (inline base64, `t=f` file, `t=t` temporary file), `a=T` transmit and display, `a=p` place an image already loaded, `a=d` delete, `a=q` query answered with `OK`. Raw RGBA/RGB (`f=24`, `f=32`) and PNG (`f=100`, decoded by the UI), multipart transfers, `z` to stack above or below text, `c`/`r` and `C`/`R` geometry, `C=1` to leave the cursor where it is. |
+
+Any of these shows a picture in PORT:
+
+```sh
+chafa -f sixel photo.png   # sixel via chafa
+img2sixel photo.png        # libsixel
+kitten icat photo.png      # kitty graphics
+```
+
+Two things worth knowing. Images ride along with the text while the scrollback
+keeps growing; once it is full the absolute line counter stops, so an image that
+scrolls far enough no longer follows. And a terminal is not a photo viewer: one
+image is capped at 32 MiB and the whole store at 64 MiB, dropping the oldest
+placement first. Frame animation, unicode placeholders and multi-frame transfers
+are not implemented.
+
+## Debug overlay
+
+Emit `OSC 556` and PORT draws diagnostic layers over the grid. The program
+controls it, so nothing appears that nobody asked for.
+
+| Payload | Effect |
+|---|---|
+| `ESC ] 556 ST` | turn every layer on |
+| `ESC ] 556 ; hud ST` | a box with measured counters: grid size, pending PTY bytes, dropped bytes, live image placements, scrollback position and whether the alternate screen is active |
+| `ESC ] 556 ; grid ST` | one thin line per cell boundary, which is how you see a wide character or a wrap that is off by one |
+| `ESC ] 556 ; off ST` | turn everything off |
+
+The HUD shows what the terminal actually keeps, so it is the quickest way to
+watch the ingestion limits work: `pending` is what waits in the bounded backlog
+and `dropped` is what the cap threw away.
 
 ## Keyboard shortcuts
 
@@ -97,6 +144,13 @@ enabled = true
 
 The file is watched: saving it applies changes immediately, including font size,
 opacity and which plugins are enabled.
+
+Two sections need no plugin at all, because a terminal cannot work without
+them: ````font```` (family and optional size) and ````selection```` (`forward_clicks`,
+`forward_drag`, `forward_motion`, `shift_selects`, `copy_on_select`,
+`word_on_double_click`, `line_on_triple_click`, `highlight_color` and
+`highlight_opacity`). PORT parses them when it loads the file, not per frame, and
+a plugin with an appearance or mouse hook still overrides them.
 
 ## Installation
 
@@ -328,7 +382,6 @@ Official plugins live in **[loonbac/port-plugins](https://github.com/loonbac/por
 | Plugin | Hooks | What it does |
 |---|---|---|
 | `transparency` | `AppearanceHook` | Window background opacity |
-| `font` | `AppearanceHook` | Font family, size and fallbacks |
 | `font-zoom` | `AppearanceHook` | Font size state and zoom operations (no key bindings) |
 | `shortcuts` | — | Bind custom key combinations to callbacks |
 | `herdr` | `AppearanceHook`, `InputHook`, `LayoutHook`, `SpaceHook` | Spaces sidebar, tabs, live process detection, per-session agent state, resizable layout, wallpaper accent colour |
@@ -337,9 +390,10 @@ Official plugins live in **[loonbac/port-plugins](https://github.com/loonbac/por
 See the [plugins repository](https://github.com/loonbac/port-plugins) for
 detailed documentation of each one.
 
-All of these are in-process. A standalone plugin is not listed here: it is
-installed by URL and does not ship as a dependency, exactly like any plugin you
-would write yourself.
+`shortcuts`, `herdr` and `close-guard` compile into PORT as in-process plugins,
+because they draw with GPUI or sit on the keystroke path. `transparency`
+and `font-zoom` are standalone binaries you install by URL, like any
+plugin you would write yourself.
 
 ## License
 
