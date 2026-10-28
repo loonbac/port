@@ -5,6 +5,10 @@
 //! - Protocolo Kitty Graphics (`ESC _ G ... ST`)
 //!
 //! Los bytes ordinarios pasan limpios al emulador sin alteración ni retraso innecesario.
+//!
+//! `store` es el otro extremo: guarda los píxeles, resuelve dónde cae cada imagen
+//! en la rejilla y entrega a la UI una lista ya posicionada, de modo que el
+//! emulador nunca sabe que existe una imagen y la UI nunca toca la rejilla.
 
 pub mod kitty;
 pub mod sixel;

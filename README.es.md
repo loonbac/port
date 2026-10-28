@@ -54,6 +54,37 @@ sin que el núcleo sepa que existe.
   congelar la sesión para siempre.
 - **Configuración legible** — un único archivo de texto plano con bloques de
   código Markdown por plugin, recargado al guardar.
+- **Imágenes en línea** — sixel y el protocolo de gráficos de kitty se pintan
+  sobre la rejilla, se desplazan con el texto en la pantalla primaria y quedan
+  fijos en la pantalla alterna.
+- **Un torrente de salida no crece en memoria** — un programa que escribe más
+  rápido de lo que el parser lee encuentra una cola acotada y un presupuesto de
+  parseo por cuadro, así que el final del flujo se sigue pintando.
+
+## Imágenes
+
+PORT habla los dos protocolos con los que un terminal muestra imágenes, y las
+pinta sobre la rejilla en vez de simularlas con caracteres de bloque.
+
+| Protocolo | Qué funciona |
+|---|---|
+| Sixel (`ESC P ... q`) | La paleta de 16 colores del VT340 y sus redefiniciones `#n;2;r;g;b`, repeticiones `!` y control de bandas `$`/`-`. La imagen aparece en el cursor y el cursor queda debajo. |
+| Kitty graphics (`ESC _ G`) | `a=t` transmite (base64 en línea, archivo con `t=f`, temporal con `t=t`), `a=T` transmite y muestra, `a=p` coloca una imagen ya cargada, `a=d` borra, `a=q` consulta y se responde `OK`. RGBA/RGB crudo (`f=24`, `f=32`) y PNG (`f=100`, lo decodifica la UI), transferencias por partes, `z` para poner la imagen encima o debajo del texto, geometría `c`/`r` y `C`/`R`, `C=1` para no mover el cursor. |
+
+Cualquiera de estos comandos muestra una imagen en PORT:
+
+```sh
+chafa -f sixel foto.png   # sixel con chafa
+img2sixel foto.png        # libsixel
+kitten icat foto.png      # kitty graphics
+```
+
+Dos cosas que conviene saber. Las imágenes acompañan al texto mientras el
+scrollback sigue creciendo; cuando se llena, el contador de líneas absolutas deja
+de avanzar y una imagen que se desplace lo suficiente deja de seguirlo. Y un
+terminal no es un visor de fotos: una imagen está limitada a 32 MiB y el almacén
+completo a 64 MiB, descartando primero la colocación más vieja. No hay animación
+por cuadros, ni marcadores unicode, ni transferencias de varios cuadros.
 
 ## Atajos de teclado
 

@@ -48,6 +48,37 @@ plugin can replace core behaviour without the core knowing it exists.
   session forever.
 - **Human-readable configuration** — one plain-text file with Markdown code
   blocks per plugin, hot-reloaded as you save.
+- **Inline images** — sixel and the kitty graphics protocol are painted on the
+  grid, scrolling with the text on the primary screen and staying put on the
+  alternate screen.
+- **A flood cannot grow memory** — a program that writes faster than the parser
+  reads hits a bounded backlog and a per-frame parse budget, so the tail keeps
+  painting and memory stays flat.
+
+## Images
+
+PORT speaks the two protocols terminals use to show pictures, and paints them on
+the grid instead of faking them with block characters.
+
+| Protocol | What works |
+|---|---|
+| Sixel (`ESC P ... q`) | The 16-colour VT340 palette plus `#n;2;r;g;b` redefinitions, `!` repeats and `$`/`-` band control. The image lands at the cursor and the cursor ends below it. |
+| Kitty graphics (`ESC _ G`) | `a=t` transmit (inline base64, `t=f` file, `t=t` temporary file), `a=T` transmit and display, `a=p` place an image already loaded, `a=d` delete, `a=q` query answered with `OK`. Raw RGBA/RGB (`f=24`, `f=32`) and PNG (`f=100`, decoded by the UI), multipart transfers, `z` to stack above or below text, `c`/`r` and `C`/`R` geometry, `C=1` to leave the cursor where it is. |
+
+Any of these shows a picture in PORT:
+
+```sh
+chafa -f sixel photo.png   # sixel via chafa
+img2sixel photo.png        # libsixel
+kitten icat photo.png      # kitty graphics
+```
+
+Two things worth knowing. Images ride along with the text while the scrollback
+keeps growing; once it is full the absolute line counter stops, so an image that
+scrolls far enough no longer follows. And a terminal is not a photo viewer: one
+image is capped at 32 MiB and the whole store at 64 MiB, dropping the oldest
+placement first. Frame animation, unicode placeholders and multi-frame transfers
+are not implemented.
 
 ## Keyboard shortcuts
 

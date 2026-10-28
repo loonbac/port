@@ -48,13 +48,13 @@ program asked for.
 
 - T1 (S1, S5, S6) — `graphics` module: raw-byte scanner for sixel DCS and kitty APC,
   plus the sixel decoder to RGBA. Contract tests in
-  `crates/term-core/tests/graphics_contract.rs`. Commit: pending.
+  `crates/term-core/tests/graphics_contract.rs`. Commit: 5001dc1.
 - T2 (S2, S7) — kitty command parser: transmit (inline, file, temp), display,
-  delete, query and the `OK` reply. Commit: pending.
+  delete, query and the `OK` reply. Commit: 4c0f41c.
 - T3 (S1-S4, S6) — store, placements, scroll anchoring, `Frame` integration and
-  `Session` wiring. Commit: pending.
+  `Session` wiring. Commit: 977a241.
 - T4 (S1-S3, S5) — `port-app`: decode to `RenderImage`, cache per image id and paint
-  with `Window::paint_image`. Commit: pending.
+  with `Window::paint_image`. Commit: 8bc122f.
 - T5 (S1-S7) — README feature list, module docs and the Velocitty comparison.
   Commit: pending.
 
@@ -63,3 +63,8 @@ program asked for.
 - L1 — "quiero que revises el repo https://github.com/valvesky/velocitty para que
   podamos ver si podemos implementar algo para nuestra terminal"
 - L2 — "dale hay que hacer todo eso, quiero poder ver imagenes tambien en port"
+
+- L3 — cerrado: el pintado ya pasa por `Window::paint_image` con caché por id;
+  lo verificado es la suite y el formato, no una ventana real (no hay display en
+  esta máquina). Queda como comprobación manual `chafa -f sixel`, `img2sixel` o
+  `kitten icat` dentro de PORT.
