@@ -369,7 +369,7 @@ fn decode_base64(input: &[u8]) -> Option<Vec<u8>> {
         };
     let mut out = Vec::with_capacity(est_capacity);
 
-    for chunk in sextets[..num_quads * 4].chunks_exact(4) {
+    for chunk in sextets[..num_quads * 4].as_chunks::<4>().0 {
         let (s0, s1, s2, s3) = (chunk[0], chunk[1], chunk[2], chunk[3]);
         out.push((s0 << 2) | (s1 >> 4));
         out.push(((s1 & 0x0f) << 4) | (s2 >> 2));

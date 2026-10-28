@@ -116,11 +116,12 @@ fn a_kitty_query_is_answered_on_the_pty() {
         Duration::from_secs(5),
     );
 
-    let text = text_of(&session);
-    // 4f 4b es OK en hexadecimal.
+    // `od` parte la salida en columnas cuando el terminal es más estrecho, así
+    // que se compara sin espacios ni saltos: 4f 4b es OK en hexadecimal.
+    let compact: String = text_of(&session).split_whitespace().collect();
     assert!(
-        text.contains("4f 4b"),
-        "la respuesta no llegó al programa: {text:?}"
+        compact.contains("4f4b"),
+        "la respuesta no llegó al programa: {compact:?}"
     );
 }
 

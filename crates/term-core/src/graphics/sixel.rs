@@ -138,7 +138,7 @@ pub fn decode(body: &[u8]) -> Option<Image> {
 
     let mut rgba = vec![0u8; total_bytes];
     // Fondo completamente opaco: píxeles no pintados quedan en negro ([0, 0, 0, 255])
-    for chunk in rgba.chunks_exact_mut(4) {
+    for chunk in rgba.as_chunks_mut::<4>().0 {
         chunk[3] = 255;
     }
 

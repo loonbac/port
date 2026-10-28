@@ -27,8 +27,8 @@ fn sixel_dcs_is_decoded_removed_from_plain_and_reported() {
             assert_eq!(img.width, 1);
             assert_eq!(img.height, 12);
             // Cada píxel pintado con el color #0 (rojo puro: [255, 0, 0, 255])
-            for pixel in img.rgba.chunks_exact(4) {
-                assert_eq!(pixel, [255, 0, 0, 255]);
+            for pixel in img.rgba.as_chunks::<4>().0 {
+                assert_eq!(pixel, &[255, 0, 0, 255]);
             }
         }
         _ => panic!("se esperaba GraphicsEvent::Sixel"),
@@ -245,8 +245,8 @@ fn sixel_repeat_operator() {
         GraphicsEvent::Sixel(img) => {
             assert_eq!(img.width, 3);
             assert_eq!(img.height, 6);
-            for pixel in img.rgba.chunks_exact(4) {
-                assert_eq!(pixel, [255, 0, 0, 255]);
+            for pixel in img.rgba.as_chunks::<4>().0 {
+                assert_eq!(pixel, &[255, 0, 0, 255]);
             }
         }
         _ => panic!("se esperaba GraphicsEvent::Sixel"),

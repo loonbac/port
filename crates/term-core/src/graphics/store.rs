@@ -480,7 +480,7 @@ fn decode(format: Format, payload: Payload, width: usize, height: usize) -> Opti
                 return None;
             }
             let mut data = Vec::with_capacity(width * height * 4);
-            for pixel in bytes.chunks_exact(3) {
+            for pixel in bytes.as_chunks::<3>().0 {
                 data.extend_from_slice(pixel);
                 data.push(255);
             }

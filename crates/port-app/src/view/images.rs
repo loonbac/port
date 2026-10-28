@@ -81,7 +81,7 @@ fn build(pixels: &Pixels) -> Option<Arc<RenderImage>> {
 fn to_bgra(source: &image::RgbaImage) -> image::RgbaImage {
     let (width, height) = (source.width(), source.height());
     let mut out = Vec::with_capacity(source.as_raw().len());
-    for pixel in source.as_raw().chunks_exact(4) {
+    for pixel in source.as_raw().as_chunks::<4>().0 {
         let (r, g, b, a) = (
             pixel[0] as u32,
             pixel[1] as u32,
