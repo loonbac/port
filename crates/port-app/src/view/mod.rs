@@ -97,6 +97,11 @@ impl Render for TerminalView {
         let plugins = self.plugins.borrow();
         let effective_bg = plugins.effective_background(self.background);
         let opacity = plugins.effective_opacity();
+        // Fondo del cromo de los plugins. La raíz no pinta fondo propio a
+        // propósito (ver el comentario de `root`), así que lo que un plugin
+        // agregue al layout tiene que llevar la misma capa que la rejilla: con
+        // el fondo y la opacidad de la aplicación, no transparente.
+        let chrome_bg = paint::chrome_background(effective_bg, opacity);
 
         let font_family = plugins.effective_font_family("FiraCode Nerd Font Mono");
         let font_size = plugins.effective_font_size(self.metrics.font_size);
@@ -396,13 +401,13 @@ impl Render for TerminalView {
 
         // 1. Barras laterales izquierdas (full height)
         for sidebar in left_sidebars {
-            root = root.child(sidebar);
+            root = root.child(div().h_full().bg(chrome_bg).child(sidebar));
         }
 
         // 2. Columna principal (tabs arriba + canvas + barra inferior)
         let mut main_col = div().flex().flex_col().flex_1().h_full().overflow_hidden();
         for bar in top_bars {
-            main_col = main_col.child(bar);
+            main_col = main_col.child(div().w_full().bg(chrome_bg).child(bar));
         }
 
         main_col = main_col.child(
@@ -560,7 +565,7 @@ impl Render for TerminalView {
         );
 
         for bar in bottom_bars {
-            main_col = main_col.child(bar);
+            main_col = main_col.child(div().w_full().bg(chrome_bg).child(bar));
         }
 
         root = root.child(main_col);
