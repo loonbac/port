@@ -119,7 +119,16 @@ cd "$WORKTREE"
 # repo principal (que sigue con el parche y con la revisión vieja).
 LOCK="$WORKTREE/Cargo.lock"
 FLAKE="$WORKTREE/flake.nix"
-upd=(cargo update -p port-plugin-herdr -p port-plugin-selection)
+# Solo los plugins que el lock fija de verdad: `port-plugin-selection` pasó a
+# ser nativo y ya no está en el grafo, así que pedirle a cargo que lo actualice
+# muere con "did not match any packages" y el bump no llega a empezar.
+upd=(cargo update)
+for pkg in port-plugin-herdr port-plugin-selection; do
+  if grep -qx "name = \"$pkg\"" "$LOCK"; then
+    upd+=(-p "$pkg")
+  fi
+done
+[ "${#upd[@]}" -gt 1 ] || die "el lock no fija ningún plugin de port-plugins"
 if [ -n "$REV" ]; then
   upd+=(--precise "$target")
 fi
@@ -151,9 +160,16 @@ mismatch="$(grep -o 'got:[[:space:]]*sha256-[A-Za-z0-9+/=]*' "$build_log" | tail
 esperado="$(printf '%s' "$mismatch" | tr -d '[:space:]' | sed 's/^got://')"
 
 if [ -n "$esperado" ]; then
+  tocado=0
   for key in port-plugin-herdr port-plugin-selection; do
-    sed -i -E "s|(\"${key}-0\.1\.0\"[[:space:]]*=[[:space:]]*\")([^\"]*)(\")|\1${esperado}\3|" "$FLAKE"
+    # Solo las claves que el flake declara: un sed a ciegas sobre una clave que
+    # no existe deja el archivo igual y el commit siguiente queda vacío.
+    if grep -q "\"${key}-0\\.1\\.0\"" "$FLAKE"; then
+      sed -i -E "s|(\"${key}-0\\.1\\.0\"[[:space:]]*=[[:space:]]*\")([^\"]*)(\")|\1${esperado}\3|" "$FLAKE"
+      tocado=1
+    fi
   done
+  [ "$tocado" -eq 1 ] || die "ninguna clave de port-plugins en flake.nix coincide con el vendor"
   git add flake.nix
   git commit -q -m "fix(flake): vendor the port-plugins revision the lock pins" -m "\`cargoLock.outputHashes\` is the hash of the git source Cargo.lock pins;
 moving the plugins to ${target:0:7} moved the revision by itself and left the
