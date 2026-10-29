@@ -654,6 +654,19 @@ fn cell_background(style_bg: Rgb, opacity: f32) -> gpui::Hsla {
     color(style_bg).opacity(opacity)
 }
 
+/// Fondo del cromo que un plugin aporta al layout (barra lateral, superior o
+/// inferior).
+///
+/// El cromo no pinta fondo propio: recibe el mismo color y la misma opacidad
+/// que cada celda de la rejilla. Sin esa capa, sobre una ventana translúcida el
+/// panel de un plugin no tiene nada detrás y se ve el escritorio a través: un
+/// panel invisible, que no es lo mismo que un panel con la transparencia de la
+/// terminal. Una sola capa con el alpha de la ventana, igual que la rejilla,
+/// para no componer dos translúcidos y quedar más opaco que el resto.
+pub(crate) fn chrome_background(background: Rgb, opacity: f32) -> gpui::Hsla {
+    cell_background(background, opacity)
+}
+
 /// Pinta una franja del área de la rejilla que ningún renglón ocupa.
 fn paint_padding(
     window: &mut Window,
@@ -706,6 +719,23 @@ mod tests {
             }
         }
         hits
+    }
+
+    /// El cromo de un plugin no puede quedar transparente: lleva la capa de la
+    /// rejilla, con su color y la opacidad de la ventana.
+    #[test]
+    fn plugin_chrome_inherits_the_terminal_background() {
+        let translucent = chrome_background(THEME_BG, 0.85);
+        assert_eq!(
+            translucent,
+            color(THEME_BG).opacity(0.85),
+            "el cromo no usa el fondo del tema con la opacidad de la ventana"
+        );
+        assert!(translucent.a > 0.0, "el cromo quedó invisible");
+
+        // Sin transparencia configurada el panel es tan opaco como la rejilla:
+        // es el caso de quien no instaló ningún plugin de transparencia.
+        assert_eq!(chrome_background(THEME_BG, 1.0).a, 1.0);
     }
 
     #[test]
