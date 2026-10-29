@@ -135,7 +135,7 @@
                 # repositorio, asi que el hash corresponde a la revision que
                 # fija Cargo.lock. Al mover esa revision hay que actualizarlo con
                 # el valor que reporta el build.
-                "port-plugin-herdr-0.1.0" = "sha256-WS9foDcETsLcA2hhUPZJwB3VIkc6RxHhlqe29AYJ3fA=";
+                "port-plugin-herdr-0.1.0" = "sha256-6cGooFEQY1w+7XSKfB2B5XFQToSAosybAUQ4jW+qz+g=";
               };
             };
 
