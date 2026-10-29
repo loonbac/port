@@ -400,14 +400,24 @@ impl Render for TerminalView {
         };
 
         // 1. Barras laterales izquierdas (full height)
+        // El ancho es el que el plugin declaró para el inset de la rejilla: en un
+        // `flex_row` un contenedor sin ancho mide 0 px y su fondo no cubre nada,
+        // aunque el hijo se dibuje igual (el panel quedaría transparente).
         for sidebar in left_sidebars {
-            root = root.child(div().h_full().bg(chrome_bg).child(sidebar));
+            root = root.child(
+                div()
+                    .w(gpui::px(left_inset))
+                    .flex_shrink_0()
+                    .h_full()
+                    .bg(chrome_bg)
+                    .child(sidebar),
+            );
         }
 
         // 2. Columna principal (tabs arriba + canvas + barra inferior)
         let mut main_col = div().flex().flex_col().flex_1().h_full().overflow_hidden();
         for bar in top_bars {
-            main_col = main_col.child(div().w_full().bg(chrome_bg).child(bar));
+            main_col = main_col.child(div().w_full().flex_shrink_0().bg(chrome_bg).child(bar));
         }
 
         main_col = main_col.child(
@@ -565,7 +575,7 @@ impl Render for TerminalView {
         );
 
         for bar in bottom_bars {
-            main_col = main_col.child(div().w_full().bg(chrome_bg).child(bar));
+            main_col = main_col.child(div().w_full().flex_shrink_0().bg(chrome_bg).child(bar));
         }
 
         root = root.child(main_col);
