@@ -2199,6 +2199,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "gpui-ce-motion"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02abe0a96698ecae757fb8fbb170b0eb2e9123355775a9bb1c4d8dd26b081ab7"
+
+[[package]]
 name = "gpui-macros"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3885,9 +3891,10 @@ dependencies = [
 [[package]]
 name = "port-plugin-herdr"
 version = "0.1.0"
-source = "git+https://github.com/loonbac/port-plugins.git?branch=master#a41de0b6dbcefb40f02d0550f842b37b5fbf5953"
+source = "git+https://github.com/loonbac/port-plugins.git?branch=master#5cfdfd843f71ab0b12a5c108bc52c19bd7230b6f"
 dependencies = [
  "gpui",
+ "gpui-ce-motion",
  "port-plugin-api",
  "port-term-core",
  "serde_json",
