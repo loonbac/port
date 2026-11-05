@@ -163,6 +163,7 @@ fn registry_reloads_config_in_real_time_when_modified() {
 /// Un plugin que solo cuenta cuántas veces le llega su bloque.
 struct CountingPlugin {
     id: &'static str,
+    value: u32,
     loads: Arc<AtomicUsize>,
 }
 
@@ -177,7 +178,7 @@ impl Plugin for CountingPlugin {
 
     fn default_config(&self) -> Option<PluginConfig> {
         let mut cfg = PluginConfig::new();
-        cfg.set("value", 1);
+        cfg.set("value", self.value);
         Some(cfg)
     }
 
@@ -188,10 +189,8 @@ impl Plugin for CountingPlugin {
 
 #[test]
 fn reloading_the_file_only_notifies_the_plugin_whose_block_changed() {
-    let dir = std::env::temp_dir().join(format!(
-        "port-test-reload-isolation-{}",
-        std::process::id()
-    ));
+    let dir =
+        std::env::temp_dir().join(format!("port-test-reload-isolation-{}", std::process::id()));
     let path = dir.join("config.md");
     let _ = std::fs::remove_dir_all(&dir);
 
@@ -200,10 +199,12 @@ fn reloading_the_file_only_notifies_the_plugin_whose_block_changed() {
     let mut registry = PluginRegistry::new();
     registry.register(CountingPlugin {
         id: "herdr",
+        value: 1,
         loads: Arc::clone(&herdr_loads),
     });
     registry.register(CountingPlugin {
         id: "font-zoom",
+        value: 5,
         loads: Arc::clone(&zoom_loads),
     });
 
@@ -239,14 +240,59 @@ fn reloading_the_file_only_notifies_the_plugin_whose_block_changed() {
     );
     assert_eq!(zoom_loads.load(Ordering::SeqCst), 1);
 
-    // Y el cambio propio sí llega: el filtro no puede silenciar al interesado.
+    // Y el cambio propio sí llega, y solo al interesado: el filtro no puede
+    // silenciar a quien cambió ni despertar a quien no.
     std::thread::sleep(std::time::Duration::from_millis(50));
     let content = std::fs::read_to_string(&path).unwrap();
     std::fs::write(&path, content.replace("value = 1", "value = 2")).unwrap();
     assert!(registry.reload_if_modified().unwrap());
     assert_eq!(herdr_loads.load(Ordering::SeqCst), 2);
-    assert_eq!(zoom_loads.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        zoom_loads.load(Ordering::SeqCst),
+        1,
+        "solo se avisa al plugin cuyo bloque cambió"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn a_plugin_registered_after_the_load_still_receives_its_block() {
+    let dir = std::env::temp_dir().join(format!("port-test-late-register-{}", std::process::id()));
+    let path = dir.join("config.md");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        &path,
+        "```herdr\nvalue = 1\n```\n\n```late\nvalue = 7\n```\n",
+    )
+    .unwrap();
+
+    let herdr_loads = Arc::new(AtomicUsize::new(0));
+    let late_loads = Arc::new(AtomicUsize::new(0));
+    let mut registry = PluginRegistry::new();
+    registry.register(CountingPlugin {
+        id: "herdr",
+        value: 1,
+        loads: Arc::clone(&herdr_loads),
+    });
+    registry.load_or_create_config(&path).unwrap();
+    assert_eq!(herdr_loads.load(Ordering::SeqCst), 1);
+
+    // El bloque de `late` ya estaba en el archivo cuando se cargó, pero el
+    // plugin no existía todavía. Al registrarse tiene que recibirlo igual: el
+    // mapa recuerda bloques del archivo, no plugins registrados.
+    registry.register(CountingPlugin {
+        id: "late",
+        value: 7,
+        loads: Arc::clone(&late_loads),
+    });
+    registry.load_or_create_config(&path).unwrap();
+    assert_eq!(
+        late_loads.load(Ordering::SeqCst),
+        1,
+        "un plugin registrado tarde recibe su bloque una vez"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -186,6 +186,10 @@ impl PluginRegistry {
     pub fn register<P: Plugin>(&mut self, plugin: P) {
         self.publish_services(&plugin);
         plugin.attach_services(Arc::clone(&self.services));
+        // El mapa recuerda bloques del archivo, no plugins registrados: un id
+        // que ya estaba en el archivo se dio por entregado antes de que este
+        // plugin existiera. Se olvida para que la próxima carga se lo entregue.
+        self.last_configs.borrow_mut().remove(plugin.id());
         self.plugins
             .push(RegisteredPlugin::new(Box::new(plugin), self.probe_cooldown));
     }
@@ -194,6 +198,7 @@ impl PluginRegistry {
     pub fn register_boxed(&mut self, plugin: Box<dyn Plugin>) {
         self.publish_services(plugin.as_ref());
         plugin.attach_services(Arc::clone(&self.services));
+        self.last_configs.borrow_mut().remove(plugin.id());
         self.plugins
             .push(RegisteredPlugin::new(plugin, self.probe_cooldown));
     }
