@@ -68,6 +68,14 @@ pub struct PluginRegistry {
     native_font: crate::native::Font,
     /// Política de ratón de fábrica, con la misma precedencia que la fuente.
     native_mouse_policy: MousePolicy,
+    /// Lo último que se le entregó a cada plugin, por id.
+    ///
+    /// El archivo es compartido: cambia por motivos que no tienen que ver con un
+    /// plugin concreto. Guardar lo ya entregado permite no volver a avisarle
+    /// cuando su bloque sigue igual, porque reenviarlo autoriza a un plugin que
+    /// reconstruye estado desde su configuración —herdr y sus spaces— a
+    /// destruirlo sin que nadie lo haya pedido.
+    last_configs: RefCell<BTreeMap<String, PluginConfig>>,
 }
 
 impl Default for PluginRegistry {
@@ -82,6 +90,7 @@ impl Default for PluginRegistry {
             services: Arc::new(Services::new()),
             native_font: crate::native::Font::default(),
             native_mouse_policy: MousePolicy::default(),
+            last_configs: RefCell::new(BTreeMap::new()),
         }
     }
 }
@@ -177,6 +186,10 @@ impl PluginRegistry {
     pub fn register<P: Plugin>(&mut self, plugin: P) {
         self.publish_services(&plugin);
         plugin.attach_services(Arc::clone(&self.services));
+        // El mapa recuerda bloques del archivo, no plugins registrados: un id
+        // que ya estaba en el archivo se dio por entregado antes de que este
+        // plugin existiera. Se olvida para que la próxima carga se lo entregue.
+        self.last_configs.borrow_mut().remove(plugin.id());
         self.plugins
             .push(RegisteredPlugin::new(Box::new(plugin), self.probe_cooldown));
     }
@@ -185,6 +198,7 @@ impl PluginRegistry {
     pub fn register_boxed(&mut self, plugin: Box<dyn Plugin>) {
         self.publish_services(plugin.as_ref());
         plugin.attach_services(Arc::clone(&self.services));
+        self.last_configs.borrow_mut().remove(plugin.id());
         self.plugins
             .push(RegisteredPlugin::new(plugin, self.probe_cooldown));
     }
@@ -296,9 +310,18 @@ impl PluginRegistry {
                 if let Some(enabled) = cfg.get_bool("enabled") {
                     entry.enabled = enabled;
                 }
-                entry.plugin.load_config(cfg);
+                // Solo se avisa al plugin cuando su bloque cambió de verdad.
+                let unchanged = self
+                    .last_configs
+                    .borrow()
+                    .get(entry.plugin.id())
+                    .is_some_and(|previous| previous == cfg);
+                if !unchanged {
+                    entry.plugin.load_config(cfg);
+                }
             }
         }
+        *self.last_configs.borrow_mut() = configs.clone();
     }
 
     /// Carga la configuración desde el archivo predeterminado (`~/.config/port/config.md`)
@@ -357,6 +380,12 @@ impl PluginRegistry {
                 let mut cfg = entry.plugin.save_config().unwrap_or_default();
                 cfg.set("enabled", entry.enabled);
                 ConfigFile::save_plugin(path, plugin_id, &cfg)?;
+                // Lo guardado es lo que el plugin ya tiene: el mapa de lo
+                // aplicado tiene que decir lo mismo, o la próxima recarga le
+                // avisaría de un cambio que él mismo escribió.
+                self.last_configs
+                    .borrow_mut()
+                    .insert(plugin_id.to_string(), cfg);
                 if self.config_path.borrow().as_deref() == Some(path) {
                     self.last_modified
                         .set(std::fs::metadata(path).and_then(|m| m.modified()).ok());
@@ -373,6 +402,9 @@ impl PluginRegistry {
             let mut cfg = entry.plugin.save_config().unwrap_or_default();
             cfg.set("enabled", entry.enabled);
             ConfigFile::save_plugin(path, entry.plugin.id(), &cfg)?;
+            self.last_configs
+                .borrow_mut()
+                .insert(entry.plugin.id().to_string(), cfg);
         }
         if self.config_path.borrow().as_deref() == Some(path) {
             self.last_modified
