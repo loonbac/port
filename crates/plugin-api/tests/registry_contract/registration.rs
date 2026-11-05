@@ -159,3 +159,94 @@ fn registry_reloads_config_in_real_time_when_modified() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Un plugin que solo cuenta cuántas veces le llega su bloque.
+struct CountingPlugin {
+    id: &'static str,
+    loads: Arc<AtomicUsize>,
+}
+
+impl Plugin for CountingPlugin {
+    fn id(&self) -> &'static str {
+        self.id
+    }
+
+    fn name(&self) -> &'static str {
+        "Counting Plugin"
+    }
+
+    fn default_config(&self) -> Option<PluginConfig> {
+        let mut cfg = PluginConfig::new();
+        cfg.set("value", 1);
+        Some(cfg)
+    }
+
+    fn load_config(&self, _config: &PluginConfig) {
+        self.loads.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+#[test]
+fn reloading_the_file_only_notifies_the_plugin_whose_block_changed() {
+    let dir = std::env::temp_dir().join(format!(
+        "port-test-reload-isolation-{}",
+        std::process::id()
+    ));
+    let path = dir.join("config.md");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let herdr_loads = Arc::new(AtomicUsize::new(0));
+    let zoom_loads = Arc::new(AtomicUsize::new(0));
+    let mut registry = PluginRegistry::new();
+    registry.register(CountingPlugin {
+        id: "herdr",
+        loads: Arc::clone(&herdr_loads),
+    });
+    registry.register(CountingPlugin {
+        id: "font-zoom",
+        loads: Arc::clone(&zoom_loads),
+    });
+
+    registry.load_or_create_config(&path).unwrap();
+    assert_eq!(herdr_loads.load(Ordering::SeqCst), 1);
+    assert_eq!(zoom_loads.load(Ordering::SeqCst), 1);
+
+    // Se edita SOLO la sección nativa de la fuente. Ningún plugin tiene por qué
+    // enterarse: reenviarle su bloque intacto autoriza a uno que reconstruye
+    // estado desde su configuración —herdr y sus spaces— a destruirlo sin que
+    // nadie lo haya pedido.
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    let content = std::fs::read_to_string(&path).unwrap();
+    let edited = content
+        .lines()
+        .map(|line| {
+            if line.starts_with("family = ") {
+                "family = Obel Mono"
+            } else {
+                line
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_ne!(edited, content, "el archivo trae la sección font");
+    std::fs::write(&path, edited).unwrap();
+
+    assert!(registry.reload_if_modified().unwrap());
+    assert_eq!(
+        herdr_loads.load(Ordering::SeqCst),
+        1,
+        "un bloque ajeno intacto no avisa al plugin"
+    );
+    assert_eq!(zoom_loads.load(Ordering::SeqCst), 1);
+
+    // Y el cambio propio sí llega: el filtro no puede silenciar al interesado.
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    let content = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(&path, content.replace("value = 1", "value = 2")).unwrap();
+    assert!(registry.reload_if_modified().unwrap());
+    assert_eq!(herdr_loads.load(Ordering::SeqCst), 2);
+    assert_eq!(zoom_loads.load(Ordering::SeqCst), 2);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
