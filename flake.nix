@@ -136,6 +136,11 @@
                 # fija Cargo.lock. Al mover esa revision hay que actualizarlo con
                 # el valor que reporta el build.
                 "port-plugin-herdr-0.1.0" = "sha256-6cGooFEQY1w+7XSKfB2B5XFQToSAosybAUQ4jW+qz+g=";
+                # smooth-cursor llega como dependencia git con `rev` fijo (ver el
+                # Cargo.toml del workspace). El vendor es el checkout completo del
+                # repositorio, asi que el hash corresponde a la revision que fija
+                # Cargo.lock; se rellena con el valor que reporta el build.
+                "port-plugin-smooth-cursor-0.1.0" = "sha256-1NzMLHMHrP4DfmEIMt0Fa67lLQUW3ZSOCcMmhD9M6lM=";
               };
             };
 

@@ -24,6 +24,7 @@ use gpui::{
 };
 use port_plugin_api::{CloseDecision, PluginRegistry};
 use port_plugin_herdr::HerdrPlugin;
+use port_plugin_smooth_cursor::SmoothCursorPlugin;
 use port_term_core::pty::PtyConfig;
 use port_term_core::session::SessionManager;
 
@@ -62,6 +63,9 @@ fn run_terminal() {
         let mut plugin_registry = PluginRegistry::new();
         // herdr dibuja con GPUI, asi que va compilado dentro de PORT.
         plugin_registry.register(HerdrPlugin::new());
+        // El cursor animado: interpola, dibuja estela y devuelve el control
+        // al nativo cuando la transicion termina.
+        plugin_registry.register(SmoothCursorPlugin::new());
         // La politica de raton y seleccion es nativa: se lee del archivo de
         // configuracion al cargarlo y no cuesta nada por gesto.
         let close_prompt = Rc::new(RefCell::new(ClosePromptState::default()));
