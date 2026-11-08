@@ -35,8 +35,9 @@ pub use port_plugin_sdk::protocol;
 
 pub use config::{ConfigFile, PluginConfig};
 pub use hooks::{
-    AgentState, AppearanceHook, CloseDecision, InputHook, KeyAction, LayoutHook, LifecycleHook,
-    MouseHook, Plugin, SpaceHook,
+    AgentState, AppearanceHook, CellRect, CloseDecision, CursorState, FrameView, InputHook,
+    KeyAction, LayoutHook, LifecycleHook, MouseHook, Overlay, OverlayHook, OverlayQuad, Plugin,
+    SpaceHook,
 };
 pub use registry::{PluginHealth, PluginInfo, PluginRegistry, DEFAULT_HOOK_BUDGET};
 pub use services::{Arg, Ret, Service, ServiceError, Services};

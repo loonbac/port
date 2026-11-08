@@ -9,7 +9,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use gpui::AnyElement;
-use port_term_core::frame::{Frame, Rgb};
+use port_term_core::frame::{CursorShape, Frame, Rgb};
 use port_term_core::input::Key;
 use port_term_core::pty::{PtyConfig, RunningApp};
 use port_term_core::session::{GridSize, MousePolicy};
@@ -263,6 +263,86 @@ pub trait LifecycleHook {
     fn on_close_confirmed(&self) {}
 }
 
+/// Rectángulo en coordenadas de celda fraccionarias, relativas al viewport
+/// visible: 0.0 es el borde izquierdo/superior de la columna/fila 0.
+/// El plugin posiciona en celdas y nunca ve píxeles, DPI, padding ni bounds.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CellRect {
+    pub column: f32,
+    pub row: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+/// Estado del cursor en el cuadro que se está pintando.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CursorState {
+    /// Huella nativa: la celda completa que PORT invertiría.
+    pub rect: CellRect,
+    /// Forma real del cursor. El plugin nunca asume bloque: puede emitir un
+    /// overlay estrecho cuando es Beam o Underline.
+    pub shape: CursorShape,
+    /// Relleno que produciría la inversión nativa para esa celda.
+    pub color: Rgb,
+}
+
+/// Vista de solo lectura del cuadro para un hook de overlay.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FrameView {
+    /// Nada cuando no hay cursor pintable (invisible, Hidden o fuera del
+    /// viewport). El host invoca igual: None significa limpia tu estado y
+    /// devuelve None.
+    pub cursor: Option<CursorState>,
+    /// Reloj monótono del host, en milisegundos. Solo valen las diferencias.
+    pub now_ms: u64,
+    /// Verdadero si la ventana tiene el foco.
+    pub focused: bool,
+}
+
+/// Un quad del overlay: posición en celdas, estilo en píxeles.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OverlayQuad {
+    pub rect: CellRect,
+    pub color: Rgb,
+    /// 0.0..=1.0; el host la multiplica por la opacidad de la ventana.
+    pub opacity: f32,
+    /// Radio de esquina en píxeles, tal cual lo configura el usuario.
+    pub corner_radius_px: f32,
+}
+
+/// Lo que el plugin pide pintar en lugar del cursor nativo.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Overlay {
+    /// Quads en orden de pintado.
+    pub quads: Vec<OverlayQuad>,
+    /// Verdadero suprime la inversión nativa en este cuadro. Se evalúa solo
+    /// del resultado de este cuadro: sin estado pegado entre cuadros.
+    pub suppress_native_cursor: bool,
+}
+
+/// Primitiva genérica de overlay por cuadro para plugins in-process.
+///
+/// No menciona ningún caso de uso: el cursor animado es solo el primer
+/// consumidor. El host la invoca una vez por cuadro pintado, con el mismo
+/// aislamiento de pánicos y presupuesto que el resto de hooks; si el hook
+/// excede el presupuesto, vale como si hubiera devuelto None en ese cuadro.
+pub trait OverlayHook {
+    /// Overlay para este cuadro, o None para dejarlo todo como siempre.
+    /// None nunca suprime nada: es passthrough puro y la red de seguridad
+    /// cuando el plugin se equivoca.
+    fn overlay(&self, view: &FrameView) -> Option<Overlay> {
+        let _ = view;
+        None
+    }
+
+    /// Verdadero mientras el plugin necesita cuadros aunque el PTY esté
+    /// callado. Obligación: debe caer a false al terminar la transición; un
+    /// true persistente es refresco permanente a tasa de pantalla.
+    fn needs_animation(&self) -> bool {
+        false
+    }
+}
+
 /// Interfaz base que todo plugin de PORT debe implementar.
 pub trait Plugin: 'static {
     /// Identificador único del plugin en formato kebab-case (ej. "transparency", "font-zoom").
@@ -303,6 +383,11 @@ pub trait Plugin: 'static {
 
     /// Hook de ciclo de vida de la ventana, si el plugin lo implementa.
     fn lifecycle_hook(&self) -> Option<&dyn LifecycleHook> {
+        None
+    }
+
+    /// Hook de overlay por cuadro, si el plugin lo implementa.
+    fn overlay_hook(&self) -> Option<&dyn OverlayHook> {
         None
     }
 
