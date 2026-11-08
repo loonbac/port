@@ -16,6 +16,9 @@ port-plugin-api = { path = "../plugin-api" }
 # herdr draws with GPUI, so it is compiled into PORT itself (see the root
 # Cargo.toml for the git dependency and the port.git patch).
 port-plugin-herdr = { workspace = true }
+# Cursor animado (overlay por cuadro): la dependencia git con su `rev` vive en
+# el Cargo.toml del workspace; aca solo se declara el uso.
+port-plugin-smooth-cursor = { workspace = true }
 # Detección de estado de agentes sin OSC (manifiestos herdr, T3): `regex` para
 # las reglas, `toml` + `serde` para cargarlos. Ya están fijados en el lock del
 # workspace; no entra ningún paquete nuevo.

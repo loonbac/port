@@ -3870,6 +3870,7 @@ dependencies = [
  "image",
  "port-plugin-api",
  "port-plugin-herdr",
+ "port-plugin-smooth-cursor",
  "port-term-core",
  "regex",
  "serde",
@@ -3906,6 +3907,15 @@ version = "0.1.12"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "port-plugin-smooth-cursor"
+version = "0.1.0"
+source = "git+https://github.com/loonbac/port-plugins.git?rev=25aaa7cb9f592364b86edce781483f1daeca210b#25aaa7cb9f592364b86edce781483f1daeca210b"
+dependencies = [
+ "port-plugin-api",
+ "port-term-core",
 ]
 
 [[package]]
