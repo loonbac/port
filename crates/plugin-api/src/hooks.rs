@@ -326,6 +326,13 @@ pub struct Overlay {
 /// consumidor. El host la invoca una vez por cuadro pintado, con el mismo
 /// aislamiento de pánicos y presupuesto que el resto de hooks; si el hook
 /// excede el presupuesto, vale como si hubiera devuelto None en ese cuadro.
+///
+/// Los quads son geometría libre: el host los pinta tal cual, solo
+/// recortados a la rejilla. Para un Beam el plugin puede emitir un quad
+/// estrecho (p. ej. 0.15 celdas) en vez de la huella completa.
+///
+/// CursorShape y Rgb no viven aquí sino en port_term_core::frame, con Rgb
+/// en u8 por canal: quien implemente este hook ya depende de term-core.
 pub trait OverlayHook {
     /// Overlay para este cuadro, o None para dejarlo todo como siempre.
     /// None nunca suprime nada: es passthrough puro y la red de seguridad
