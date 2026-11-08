@@ -15,11 +15,50 @@ use gpui::{
     fill, point, px, rgb, size, App, Bounds, Font, FontFallbacks, FontStyle, FontWeight, Pixels,
     TextRun, Window,
 };
-use port_term_core::frame::{Frame, PlacedImage, Rgb, Row, Run, Style};
+use port_plugin_api::hooks::{CellRect, CursorState, FrameView, Overlay};
+use port_term_core::frame::{CursorShape, Frame, PlacedImage, Rgb, Row, Run, Style};
 use port_term_core::session::MousePolicy;
 
 use crate::metrics::Metrics;
 use crate::view::images::ImageCache;
+
+/// Época del proceso para FrameView::now_ms: solo valen las diferencias.
+static EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+/// Vista del cuadro para el hook de overlay: cursor en celdas, reloj y foco.
+///
+/// El rect es siempre la celda completa del cursor y el color su relleno de
+/// inversión; la forma viaja tal cual para que el plugin nunca asuma bloque.
+pub(crate) fn frame_view(frame: &Frame, focused: bool) -> FrameView {
+    let cursor = frame.cursor.as_ref().and_then(|cursor| {
+        if !cursor.visible || cursor.shape == CursorShape::Hidden {
+            return None;
+        }
+        let color = frame
+            .cursor_run
+            .and_then(|found| frame.rows.get(found.row)?.runs.get(found.run_index))
+            .map(|run| run.style.fg)
+            .unwrap_or(Rgb::DEFAULT_FG);
+        Some(CursorState {
+            rect: CellRect {
+                column: cursor.column as f32,
+                row: cursor.row as f32,
+                width: 1.0,
+                height: 1.0,
+            },
+            shape: cursor.shape,
+            color,
+        })
+    });
+    FrameView {
+        cursor,
+        now_ms: EPOCH
+            .get_or_init(std::time::Instant::now)
+            .elapsed()
+            .as_millis() as u64,
+        focused,
+    }
+}
 
 /// Pinta el cuadro completo: quads de fondo, glifos geométricos y texto.
 #[allow(clippy::too_many_arguments)]
@@ -34,6 +73,7 @@ pub(crate) fn paint_frame(
     font_family: &str,
     font_size_f32: f32,
     font_fallbacks: &[String],
+    overlay: Option<&Overlay>,
     window: &mut Window,
     cx: &mut App,
 ) {
@@ -80,6 +120,14 @@ pub(crate) fn paint_frame(
     // El margen alrededor de la rejilla se pinta antes y por separado: la rejilla
     // la cubren los fondos de las celdas, y si el margen quedara debajo de ellos
     // cada celda sumaría una capa más de alpha y volvería el rectángulo opaco.
+    // La supresión del overlay vale solo para este cuadro: si el hook
+    // devolvió None, el cursor nativo se pinta con normalidad.
+    let native_cursor_run = if overlay.is_some_and(|o| o.suppress_native_cursor) {
+        None
+    } else {
+        frame.cursor_run
+    };
+
     let grid_width = cell_width * frame.columns as f32;
     let grid_height = cell_height * frame.rows.len() as f32;
     let grid_right = origin_x + grid_width;
@@ -125,8 +173,7 @@ pub(crate) fn paint_frame(
         // Los fondos cubren la fila entera, columnas vacías incluidas: cada
         // píxel recibe una sola capa translúcida y la transparencia queda igual
         // en toda la ventana.
-        let cursor_run = frame
-            .cursor_run
+        let cursor_run = native_cursor_run
             .filter(|cursor| cursor.row == row_index)
             .map(|cursor| cursor.run_index);
 
@@ -172,8 +219,7 @@ pub(crate) fn paint_frame(
         let mut left = origin_x;
 
         for (run_index, run) in row.runs.iter().enumerate() {
-            let is_cursor = frame
-                .cursor_run
+            let is_cursor = native_cursor_run
                 .is_some_and(|cursor| cursor.row == row_index && cursor.run_index == run_index);
             let style = style_of(run, is_cursor);
             let width = cell_width * run.columns as f32;
@@ -260,7 +306,7 @@ pub(crate) fn paint_frame(
         }
     }
 
-    // Imágenes que van por encima del texto: el último trazo del cuadro.
+    // Imágenes que van por encima del texto.
     paint_images(
         &frame.images,
         images,
@@ -272,10 +318,70 @@ pub(crate) fn paint_frame(
         window,
     );
 
+    // Overlay de plugins: último trazo de la rejilla, antes del chrome.
+    // La supresión ya se aplicó arriba sobre el cursor nativo; aquí solo se
+    // pinta lo que el overlay trae, en su orden y recortado a la rejilla.
+    if let Some(overlay) = overlay {
+        paint_overlay(
+            overlay,
+            origin_x,
+            origin_y,
+            cell_width,
+            cell_height,
+            frame.columns,
+            frame.rows.len(),
+            opacity,
+            window,
+        );
+    }
+
     if frame.debug.flags.any() {
         paint_debug(
             bounds, frame, &regular, font_size, origin_x, origin_y, cw_f32, ch_f32, window, cx,
         );
+    }
+}
+
+/// Quads del overlay recortados a la rejilla, con la opacidad compuesta con
+/// la de la ventana y el radio en píxeles directo: es lo que el usuario
+/// configura y lo que el motor espera, nadie convierte nada.
+#[allow(clippy::too_many_arguments)]
+fn paint_overlay(
+    overlay: &Overlay,
+    origin_x: Pixels,
+    origin_y: Pixels,
+    cell_width: Pixels,
+    cell_height: Pixels,
+    columns: usize,
+    rows: usize,
+    window_opacity: f32,
+    window: &mut Window,
+) {
+    for quad in &overlay.quads {
+        let c0 = quad.rect.column.clamp(0.0, columns as f32);
+        let r0 = quad.rect.row.clamp(0.0, rows as f32);
+        let c1 = (quad.rect.column + quad.rect.width).clamp(0.0, columns as f32);
+        let r1 = (quad.rect.row + quad.rect.height).clamp(0.0, rows as f32);
+        if c1 <= c0 || r1 <= r0 {
+            continue;
+        }
+        let background = color(quad.color).opacity((quad.opacity * window_opacity).clamp(0.0, 1.0));
+        let bounds = Bounds::new(
+            point(origin_x + cell_width * c0, origin_y + cell_height * r0),
+            size(cell_width * (c1 - c0), cell_height * (r1 - r0)),
+        );
+        window.paint_quad(if quad.corner_radius_px <= 0.0 {
+            fill(bounds, background)
+        } else {
+            gpui::quad(
+                bounds,
+                px(quad.corner_radius_px.max(0.0)),
+                background,
+                gpui::Edges::default(),
+                gpui::transparent_black(),
+                gpui::BorderStyle::default(),
+            )
+        });
     }
 }
 

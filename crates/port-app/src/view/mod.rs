@@ -39,7 +39,7 @@ use mouse::{
     cell_at_pointer, cell_under_pointer, finish_drag, mouse_modifiers,
     selection_kind_for_click_count, starts_local_selection, terminal_button, wheel_lines,
 };
-use paint::paint_frame;
+use paint::{frame_view, paint_frame};
 
 pub struct TerminalView {
     session_manager: Rc<RefCell<SessionManager>>,
@@ -281,6 +281,10 @@ impl Render for TerminalView {
         // pidiendo cuadros aunque el PTY esté callado y no haya gestos; si no,
         // GPUI solo repinta a demanda y la animación se congela en reposo.
         let needs_animation = plugins.needs_animation();
+        // El overlay se resuelve aquí, con el registro prestado y antes de
+        // soltarlo: una invocación por cuadro, valga lo que valga el tick.
+        let overlay_view = frame_view(&frame, self.focus_handle.is_focused(window));
+        let overlay = plugins.overlay(&overlay_view);
         drop(session_mgr);
         drop(plugins);
 
@@ -565,6 +569,7 @@ impl Render for TerminalView {
                                 &font_family,
                                 font_size,
                                 &font_fallbacks,
+                                overlay.as_ref(),
                                 window,
                                 cx,
                             );

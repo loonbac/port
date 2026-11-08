@@ -19,7 +19,7 @@ use port_term_core::pty::{PtyConfig, RunningApp};
 use port_term_core::session::GridSize;
 use port_term_core::session::MousePolicy;
 
-use crate::hooks::{AgentState, CloseDecision, KeyAction};
+use crate::hooks::{AgentState, CloseDecision, FrameView, KeyAction, Overlay};
 
 use super::PluginRegistry;
 
@@ -204,6 +204,35 @@ impl PluginRegistry {
         // Sin nadie que hable manda la sección nativa del archivo, no el
         // default del tipo: así el usuario configura sin instalar nada.
         self.native_mouse_policy
+    }
+
+    /// Overlay del cuadro: el primer plugin registrado que devuelva Some.
+    ///
+    /// Regla gana el primero, igual que la política de ratón: un plugin
+    /// deshabilitado o con el watchdog disparado no aporta y cede ante el
+    /// siguiente. Cada llamada devuelve exactamente lo que los plugins
+    /// devuelven en ESA llamada, el registro no guarda nada entre cuadros:
+    /// un None tras un Some quita la supresión en ese mismo cuadro, y si
+    /// nadie aporta rige el passthrough (el cursor nativo se pinta). Leer el
+    /// overlay pasa por el mismo aislamiento de pánicos y presupuesto que el
+    /// resto de hooks: excederlo vale como None en ese cuadro.
+    pub fn overlay(&self, view: &FrameView) -> Option<Overlay> {
+        for entry in &self.plugins {
+            if !entry.can_invoke() {
+                continue;
+            }
+            if entry.plugin.overlay_hook().is_some() {
+                if let Some(found) = entry.invoke_hook(self.hook_budget, None, || {
+                    entry
+                        .plugin
+                        .overlay_hook()
+                        .and_then(|hook| hook.overlay(view))
+                }) {
+                    return Some(found);
+                }
+            }
+        }
+        None
     }
 
     /// Altura acumulada de las barras superiores activas.
@@ -570,6 +599,11 @@ impl PluginRegistry {
                     .layout_hook()
                     .map(|h| h.needs_animation())
                     .unwrap_or(false)
+                    || entry
+                        .plugin
+                        .overlay_hook()
+                        .map(|h| h.needs_animation())
+                        .unwrap_or(false)
             });
             if needed {
                 return true;

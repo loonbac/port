@@ -7,6 +7,7 @@
 mod externals;
 mod hooks;
 mod mouse;
+mod overlay;
 mod registration;
 mod services;
 mod watchdog;
