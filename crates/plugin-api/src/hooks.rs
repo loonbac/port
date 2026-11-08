@@ -350,9 +350,11 @@ pub trait OverlayHook {
     /// LayoutHook para no romper implementadores ni bifurcar la forma. El
     /// patrón acordado es que overlay() calcule el estado de la transición
     /// para ese cuadro y lo guarde (p. ej. en un AtomicBool), y que esto
-    /// devuelva ese valor cacheado. No abandones overlay() antes de llamar a tu rutina de consumo:
-/// un retorno temprano deja el flag pegado y el síntoma es refresco permanente, no un crash.
-/// Cuesta un cuadro de retraso al apagar,
+    /// devuelva ese valor cacheado. No abandones overlay() antes de llamar a tu rutina de
+    /// consumo: un retorno temprano deja el flag pegado y el síntoma es refresco permanente,
+    /// no un crash.
+    ///
+    /// Cuesta un cuadro de retraso al apagar,
     /// que coincide con la gracia de cierre. El host invoca overlay() una
     /// vez por cuadro pintado, siempre, para que ese flag nunca se quede
     /// pegado en true.
