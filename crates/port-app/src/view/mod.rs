@@ -280,11 +280,15 @@ impl Render for TerminalView {
         // Si un plugin anima por reloj (spinner, parpadeo), hay que seguir
         // pidiendo cuadros aunque el PTY esté callado y no haya gestos; si no,
         // GPUI solo repinta a demanda y la animación se congela en reposo.
-        let needs_animation = plugins.needs_animation();
+        // El overlay se resuelve ANTES de leer el flag: needs_animation debe
+        // reflejar el cuadro actual, no el anterior. Si se leyera primero, el
+        // cuadro que inicia una transición no pediría el siguiente y el cursor
+        // quedaría clavado en la posición vieja hasta el próximo gesto.
         // El overlay se resuelve aquí, con el registro prestado y antes de
         // soltarlo: una invocación por cuadro, valga lo que valga el tick.
         let overlay_view = frame_view(&frame, self.focus_handle.is_focused(window));
         let overlay = plugins.overlay(&overlay_view);
+        let needs_animation = plugins.needs_animation();
         drop(session_mgr);
         drop(plugins);
 
