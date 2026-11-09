@@ -36,7 +36,7 @@ port-plugin-selection = { git = "https://github.com/loonbac/port-plugins.git", b
 # El cursor animado vive en el nucleo del pintado, asi que tambien se compila
 # dentro de PORT. Fijado por `rev` (no rama movil): el tag del crate dice que
 # contiene (`smooth-cursor-v0.1.12`) y el sha no se puede mover.
-port-plugin-smooth-cursor = { git = "https://github.com/loonbac/port-plugins.git", rev = "265fe3db8d34609f9c90e3e9f3de900fd0e19743" }
+port-plugin-smooth-cursor = { git = "https://github.com/loonbac/port-plugins.git", rev = "58fbf45597784d65513737552c7c385be4e82d62" }
 
 # Los plugins llegan como dependencias git, pero deben usar el API y el core de
 # ESTE repo: son el mismo codigo, no dos copias. Sin esto, `Plugin` se resuelve

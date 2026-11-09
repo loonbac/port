@@ -140,7 +140,7 @@
                 # Cargo.toml del workspace). El vendor es el checkout completo del
                 # repositorio, asi que el hash corresponde a la revision que fija
                 # Cargo.lock; se rellena con el valor que reporta el build.
-                "port-plugin-smooth-cursor-0.1.0" = "sha256-2Ln12T4pIUjJ0yWTSzdgROTfraXXuJbrFz8R03EoyZw=";
+                "port-plugin-smooth-cursor-0.1.0" = "sha256-CPO0NSGc3UUBB9is8E7Tx2lQ1FGV9DwewdkXucewLJk=";
               };
             };
 
