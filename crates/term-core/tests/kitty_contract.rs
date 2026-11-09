@@ -5,6 +5,7 @@
 //! eliminación, consultas y respuestas sincrónicas solicitadas.
 
 use port_term_core::graphics::kitty::{Command, Delete, Format, Payload, Placement};
+use port_term_core::graphics::store::{Origin, Pixels, Store};
 
 #[test]
 fn payload_must_start_with_g() {
@@ -371,6 +372,83 @@ fn transmission_flags_more_and_quiet() {
         }
         _ => panic!("se esperaba Transmit sin flags"),
     }
+}
+
+#[test]
+fn chunked_transmission_inherits_the_first_chunk_controls() {
+    // Solo el primer APC de una transmisión partida lleva las claves de control;
+    // los trozos siguientes traen únicamente `m` y los datos. Sin `i` son de
+    // continuación: el almacén los suma a la transmisión abierta en vez de
+    // tomarlos por una imagen nueva sin identificador ni formato.
+    // 1x2 RGBA (rojo, verde) en tres trozos de base64: /wAA /wD/ AP8=
+    let first = Command::parse(b"Ga=T,f=32,s=1,v=2,i=3,m=1;/wAA");
+    let middle = Command::parse(b"Gm=1;/wD/");
+    let last = Command::parse(b"Gm=0;AP8=");
+
+    match &first {
+        Command::Transmit(t) => {
+            assert_eq!(t.image, 3);
+            assert!(t.more);
+            assert!(!t.continuation, "el primer trozo sí trae sus controles");
+        }
+        other => panic!("se esperaba Transmit, llegó {other:?}"),
+    }
+    match &middle {
+        Command::Transmit(t) => {
+            assert!(t.more);
+            assert!(t.continuation, "sin `i` es un trozo de continuación");
+        }
+        other => panic!("se esperaba Transmit, llegó {other:?}"),
+    }
+    match &last {
+        Command::Transmit(t) => {
+            assert!(!t.more);
+            assert!(
+                t.continuation,
+                "el trozo final tampoco repite los controles"
+            );
+        }
+        other => panic!("se esperaba Transmit, llegó {other:?}"),
+    }
+
+    let origin = Origin {
+        line: 0,
+        row: 0,
+        column: 0,
+        alternate: false,
+    };
+    let mut store = Store::new();
+    store.apply(first, origin);
+    store.apply(middle, origin);
+    assert_eq!(
+        store.placement_count(),
+        0,
+        "los trozos intermedios no colocan nada"
+    );
+    store.apply(last, origin);
+
+    let placed = store.visible(0, 10);
+    assert_eq!(
+        placed.len(),
+        1,
+        "se coloca una sola imagen, no una por trozo"
+    );
+    assert_eq!(
+        placed[0].image, 3,
+        "el identificador es el del primer trozo"
+    );
+    assert_eq!((placed[0].row, placed[0].column), (0, 0));
+    assert_eq!(placed[0].columns, 1);
+    assert_eq!(placed[0].rows, 1);
+    assert_eq!(
+        placed[0].pixels.as_ref(),
+        &Pixels::Rgba {
+            width: 1,
+            height: 2,
+            data: vec![255, 0, 0, 255, 0, 255, 0, 255],
+        },
+        "los tres trozos deben reensamblar los píxeles declarados"
+    );
 }
 
 #[test]

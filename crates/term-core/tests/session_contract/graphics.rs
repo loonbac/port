@@ -38,6 +38,24 @@ fn started(extra: &str) -> Session {
 /// Sixel de 3x6 píxeles: una columna por cada carácter, banda de seis filas.
 const SIXEL: &[u8] = b"\x1bPq#0;2;100;0;0#0@A_\x1b\\";
 
+/// PNG RGBA válido de 3x2 píxeles, en base64: lo que un programa real transmite.
+const PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAYAAACddGYaAAAAG0lEQVR42mP4z8DwHwwZ/gNJIGhoaAByGP4DAKv4DXUG8nAyAAAAAElFTkSuQmCC";
+
+/// Parte el base64 en trozos de `size` caracteres.
+///
+/// El tamaño es múltiplo de cuatro: un programa real no parte los grupos de
+/// base64 porque cada trozo se decodifica por separado.
+fn base64_chunks(size: usize) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    while start < PNG_BASE64.len() {
+        let end = (start + size).min(PNG_BASE64.len());
+        out.push(&PNG_BASE64[start..end]);
+        start = end;
+    }
+    out
+}
+
 #[test]
 fn sixel_output_appears_in_the_frame() {
     let mut session = started("");
@@ -102,6 +120,64 @@ fn kitty_transmit_and_display_appears_in_the_frame() {
         }
         other => panic!("se esperaban píxeles RGBA, llegó {other:?}"),
     }
+}
+
+#[test]
+fn a_chunked_kitty_transmission_paints_the_whole_image() {
+    // Un programa parte la imagen en trozos: solo el primer APC lleva las
+    // claves de control (acción, formato, identificador, colocación y `m=1`);
+    // los siguientes traen únicamente `m` y los datos. El terminal tiene que
+    // reensamblar los trozos y decodificar el contenido completo con el formato
+    // del primero: si cada trozo se toma como una transmisión suelta, el último
+    // decodifica la cola como píxeles crudos y no pinta nada.
+    let mut whole = started("");
+    whole
+        .write(format!("\x1b_Ga=T,f=100,q=2,i=1;{PNG_BASE64}\x1b\\").as_bytes())
+        .expect("escribir la imagen entera");
+    let _ = pump_until_quiet(
+        &mut whole,
+        Duration::from_millis(200),
+        Duration::from_secs(5),
+    );
+    let expected = whole.frame().images.clone();
+    assert_eq!(expected.len(), 1, "la imagen entera debía pintarse");
+
+    let chunks = base64_chunks(40);
+    assert_eq!(chunks.len(), 3, "el PNG debe viajar en tres trozos");
+    let mut split = Vec::new();
+    for (index, chunk) in chunks.iter().enumerate() {
+        let more = index + 1 < chunks.len();
+        let control = if index == 0 {
+            format!("a=T,f=100,q=2,i=1,C=1,m={}", u8::from(more))
+        } else {
+            format!("m={}", u8::from(more))
+        };
+        split.extend_from_slice(format!("\x1b_G{control};{chunk}\x1b\\").as_bytes());
+    }
+
+    let mut partida = started("");
+    partida.write(&split).expect("escribir la imagen partida");
+    let _ = pump_until_quiet(
+        &mut partida,
+        Duration::from_millis(200),
+        Duration::from_secs(5),
+    );
+
+    let frame = partida.frame();
+    assert_eq!(
+        frame.images.len(),
+        1,
+        "los trozos debían reensamblarse en una sola imagen"
+    );
+    assert_eq!(
+        frame.images[0].pixels.dimensions(),
+        Some((3, 2)),
+        "la cabecera PNG tiene que llegar entera"
+    );
+    assert_eq!(
+        frame.images, expected,
+        "la imagen partida tiene que ser la misma que la transmitida entera"
+    );
 }
 
 #[test]

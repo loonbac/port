@@ -38,6 +38,13 @@ pub struct Placement {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Transmission {
     pub image: u32,
+    /// El bloque de control no trae `i`: es un trozo de continuación de una
+    /// transmisión partida y hereda los metadatos del primer trozo.
+    ///
+    /// El protocolo manda las claves de control solo en el primer APC; los
+    /// trozos siguientes llevan únicamente `m` y los datos, así que por sí solos
+    /// no dicen de qué imagen son ni en qué formato están.
+    pub continuation: bool,
     pub format: Format,
     pub width: usize,
     pub height: usize,
@@ -218,6 +225,7 @@ impl Command {
                 };
 
                 let image = image_id.unwrap_or(0);
+                let continuation = image_id.is_none();
                 let display = if effective_action == "T" {
                     Some(Placement {
                         image,
@@ -235,6 +243,7 @@ impl Command {
 
                 Command::Transmit(Transmission {
                     image,
+                    continuation,
                     format,
                     width: pixel_width.unwrap_or(0),
                     height: pixel_height.unwrap_or(0),

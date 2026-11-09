@@ -16,7 +16,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::kitty::{Command, Delete, Format, Payload, Transmission};
+use super::kitty::{Command, Delete, Format, Payload, Placement, Transmission};
 use super::Image;
 
 /// Tope por imagen: más que eso se descarta en vez de guardarse.
@@ -135,10 +135,70 @@ impl Effect {
     }
 }
 
+/// Transmisión partida en tránsito.
+///
+/// Solo el primer trozo trae bloque de control: identificador, formato,
+/// geometría, silencio y colocación. Los trozos siguientes traen únicamente `m`
+/// y datos, así que esos metadatos se guardan aquí y se aplican cuando llega el
+/// trozo final, que es cuando se puede decodificar el contenido completo.
+///
+/// Solo puede haber una en tránsito: el protocolo exige que los trozos de una
+/// transmisión lleguen seguidos. El contenido se acumula siempre en línea, que
+/// es el único medio que se parte.
+struct Chunked {
+    image: u32,
+    format: Format,
+    width: usize,
+    height: usize,
+    quiet: bool,
+    display: Option<Placement>,
+    bytes: Vec<u8>,
+}
+
+impl Chunked {
+    /// Abre la transmisión con los metadatos y los bytes de su primer trozo.
+    fn start(transmission: &Transmission) -> Self {
+        let mut chunked = Self {
+            image: transmission.image,
+            format: transmission.format,
+            width: transmission.width,
+            height: transmission.height,
+            quiet: transmission.quiet,
+            display: transmission.display.clone(),
+            bytes: Vec::new(),
+        };
+        chunked.append(&transmission.payload);
+        chunked
+    }
+
+    /// Suma el contenido del trozo, si viaja en línea.
+    fn append(&mut self, payload: &Payload) {
+        if let Payload::Inline(bytes) = payload {
+            self.bytes.extend_from_slice(bytes);
+        }
+    }
+
+    /// Convierte la transmisión ya completa en un solo comando, con los
+    /// metadatos del primer trozo y el contenido de todos.
+    fn finish(self) -> Transmission {
+        Transmission {
+            image: self.image,
+            continuation: false,
+            format: self.format,
+            width: self.width,
+            height: self.height,
+            payload: Payload::Inline(self.bytes),
+            more: false,
+            quiet: self.quiet,
+            display: self.display,
+        }
+    }
+}
+
 /// Almacén de imágenes y colocaciones.
 pub struct Store {
-    /// Bytes en tránsito de una transmisión partida, por identificador.
-    chunked: HashMap<u32, Vec<u8>>,
+    /// Transmisión partida que está llegando, si la hay.
+    chunked: Option<Chunked>,
     images: HashMap<u32, Arc<Pixels>>,
     /// Orden de llegada, para desalojar lo más viejo primero.
     order: Vec<u32>,
@@ -153,7 +213,7 @@ pub struct Store {
 impl Default for Store {
     fn default() -> Self {
         Self {
-            chunked: HashMap::new(),
+            chunked: None,
             images: HashMap::new(),
             order: Vec::new(),
             total: 0,
@@ -237,7 +297,7 @@ impl Store {
                         self.placements.clear();
                         self.images.clear();
                         self.order.clear();
-                        self.chunked.clear();
+                        self.chunked = None;
                         self.total = 0;
                     }
                     Delete::Image(image) => self.remove_image(image),
@@ -301,34 +361,41 @@ impl Store {
         let mut effect = Effect::nothing();
 
         if transmission.more {
-            // Llega partido: se acumula hasta el último trozo.
-            let entry = self.chunked.entry(transmission.image).or_default();
-            if let Payload::Inline(bytes) = &transmission.payload {
-                entry.extend_from_slice(bytes);
-            }
-            if entry.len() > MAX_FILE_BYTES {
-                self.chunked.remove(&transmission.image);
+            // Llega partido: se acumula hasta el último trozo. El primer trozo
+            // abre la transmisión con sus metadatos; los de continuación se
+            // suman a ella.
+            let chunked = match self.chunked.take() {
+                Some(mut chunked) if transmission.continuation => {
+                    chunked.append(&transmission.payload);
+                    chunked
+                }
+                // El emisor repite el bloque de control en cada trozo: se sigue
+                // acumulando en la misma transmisión, como antes.
+                Some(mut chunked) if chunked.image == transmission.image => {
+                    chunked.append(&transmission.payload);
+                    chunked
+                }
+                _ => Chunked::start(&transmission),
+            };
+            // Por encima del tope se descarta la transmisión entera.
+            if chunked.bytes.len() <= MAX_FILE_BYTES {
+                self.chunked = Some(chunked);
             }
             return effect;
         }
 
-        let payload = match (
-            &transmission.payload,
-            self.chunked.remove(&transmission.image),
-        ) {
-            (Payload::Inline(bytes), Some(mut pending)) => {
-                pending.extend_from_slice(bytes);
-                Payload::Inline(pending)
-            }
-            (other, _) => other.clone(),
-        };
-
-        let Some(pixels) = decode(
-            transmission.format,
+        let Transmission {
+            image,
+            format,
+            width,
+            height,
             payload,
-            transmission.width,
-            transmission.height,
-        ) else {
+            quiet,
+            display,
+            ..
+        } = self.close_chunks(transmission);
+
+        let Some(pixels) = decode(format, payload, width, height) else {
             return effect;
         };
         if pixels.bytes() > MAX_IMAGE_BYTES {
@@ -336,11 +403,11 @@ impl Store {
         }
 
         let (_, height) = pixels.dimensions().unwrap_or((0, 0));
-        self.insert_image(transmission.image, Arc::new(pixels));
+        self.insert_image(image, Arc::new(pixels));
 
-        if let Some(geometry) = transmission.display {
+        if let Some(geometry) = display {
             self.place(
-                transmission.image,
+                image,
                 geometry.placement,
                 at,
                 geometry.column_offset,
@@ -355,10 +422,40 @@ impl Store {
                 effect.rows = geometry.rows.unwrap_or_else(|| self.ceil_rows(height));
             }
         }
-        if !transmission.quiet {
-            effect.reply = Some(ok_reply(transmission.image));
+        if !quiet {
+            effect.reply = Some(ok_reply(image));
         }
         effect
+    }
+
+    /// Resuelve el trozo final de una transmisión partida.
+    ///
+    /// Un trozo de continuación hereda identificador, formato, geometría,
+    /// silencio y colocación del primero y aporta solo sus datos. Si el emisor
+    /// repite los controles en el trozo final se conserva el comportamiento
+    /// anterior y solo se unen los bytes; y si la transmisión en tránsito es de
+    /// otra imagen, sigue esperando sus trozos.
+    fn close_chunks(&mut self, transmission: Transmission) -> Transmission {
+        let Some(mut chunked) = self.chunked.take() else {
+            return transmission;
+        };
+        // Con medio por archivo no hay datos que reensamblar: el comando se
+        // aplica tal cual, como antes.
+        if transmission.continuation && matches!(&transmission.payload, Payload::Inline(_)) {
+            chunked.append(&transmission.payload);
+            return chunked.finish();
+        }
+        if chunked.image != transmission.image {
+            self.chunked = Some(chunked);
+            return transmission;
+        }
+        let mut merged = transmission;
+        if let Payload::Inline(bytes) = &merged.payload {
+            let mut all = chunked.bytes;
+            all.extend_from_slice(bytes);
+            merged.payload = Payload::Inline(all);
+        }
+        merged
     }
 
     fn insert_image(&mut self, id: u32, pixels: Arc<Pixels>) {
