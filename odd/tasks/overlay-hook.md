@@ -10,7 +10,7 @@ S2: CursorState lleva shape espejo minimo (Block/Beam/Underline/Hidden). Aunque 
 S3: needs_animation con OR entre layout y overlay hooks. Debe responder false en cuanto la transicion termina (~120 ms), no true mientras el plugin este cargado. Las llamadas van por invoke_hook con su aislamiento y presupuesto.
 S4: corner_radius_px en pixeles de punta a punta (el humano configura CORNER_RADIUS = 2.0 y espera 2 pixeles). El host lo pasa directo a corner_radii; nadie convierte nada.
 S5: Invocacion incondicional, una vez por cuadro pintado, con cursor None cuando no hay cursor pintable. None significa: limpia tu estado y devuelve None.
-S6: Orden del cuadro de transicion: se pide needs_animation; si da true hay cuadro; en ese cuadro se invoca; None pinta el nativo. La supresion se evalua solo del resultado del hook en ese mismo cuadro, sin estado pegado.
+S6: Orden del cuadro de transicion: se invoca overlay() PRIMERO y needs_animation DESPUES, para que el flag refleje el cuadro actual y el cuadro que inicia una transicion ya pida el siguiente. None pinta el nativo. La supresion se evalua solo del resultado del hook en ese mismo cuadro, sin estado pegado.
 S7: Varios plugins: primer Some gana segun orden de registro; queda documentado en el hook.
 S8: Plugin-side verificado por port-plugins: 21 tests en verde, clippy limpio; handoff_keeps_one_extra_frame_then_stops, idle_cursor_never_requests_frames; gracia de 32 ms y passthrough (None cuando no hay transicion).
 

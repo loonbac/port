@@ -3912,7 +3912,7 @@ dependencies = [
 [[package]]
 name = "port-plugin-smooth-cursor"
 version = "0.1.0"
-source = "git+https://github.com/loonbac/port-plugins.git?rev=25aaa7cb9f592364b86edce781483f1daeca210b#25aaa7cb9f592364b86edce781483f1daeca210b"
+source = "git+https://github.com/loonbac/port-plugins.git?rev=265fe3db8d34609f9c90e3e9f3de900fd0e19743#265fe3db8d34609f9c90e3e9f3de900fd0e19743"
 dependencies = [
  "port-plugin-api",
  "port-term-core",
